@@ -1,2 +1,0 @@
-# zongyan.github.io
-blog
