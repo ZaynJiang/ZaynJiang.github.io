@@ -79,4 +79,19 @@ kafka的关闭连接有两种，一种是用户主动关闭，一种是 Kafka �
 * 主动关闭  
 如何用户produce.close();或者kill
 * Kafka自动关闭  
-connections.max.idle.ms（默认9min）,如果9分钟之内没有任何数据，则主动关闭避免浪费资源。也可以设置成-1来使得自动关闭禁用。
+connections.max.idle.ms（默认9min）,如果9分钟之内没有任何数据，则主动关闭避免浪费资源。也可以设置成-1来使得自动关闭禁用。  
+### 3.4 预防消息丢失  
+kafka能够保证已提交的消息有限度的不丢失消息的，注意这个有限度的意思是保证至少有broker存活，否则谈丢失消息毫无意义  
+在生产端如何防止生产丢失消息呢？  
+* 使用回调producer.send(msg, callback)来发送消息  
+直接使用send(msg)是异步发送的，需要回调保证消息发送是否成功还是失败
+* acks = all代表所有的副本都已经提交了
+* retries设置代表遇到网络抖动时，多试几次提升不丢的概率
+* unclean.leader.election.enable
+* replication.factor >= 3，冗余数量
+* min.insync.replicas > 1，至少写入副本数量算已经提交
+* replication.factor > min.insync.replicas，replication.factor = min.insync.replicas + 1
+* 确保消息消费完成再提交  
+
+**注意**  
+增加主题分区。当增加主题分区后，在某段“不凑巧”的时间间隔后，Producer 先于 Consumer 感知到新增加的分区，而 Consumer 设置的是“从最新位移处”开始读取消息，因此在 Consumer 感知到新分区前，Producer 发送的这些消息就全部“丢失”了，或者说 Consumer 无法读取到这些消息
