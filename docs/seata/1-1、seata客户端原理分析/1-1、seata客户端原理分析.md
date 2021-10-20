@@ -194,14 +194,18 @@ Branchid 在xa的start之前
 * Seata本身会增加系统性能损耗，如全局事务xid获取（与TC通讯）、before image解析SQL、after image解析SQL、insert undo log（新增的sql记录），branch注册（tc通讯）、undo记录数据量较大（包含执行前和执行后的记录），第二阶段会占用系统资源、网络开销、数据库资源等，所以在使用的时候一定要考虑为了这个一致性有较大性能损耗是否值得。
 * TC目前是支持节点的集群部署，但是水平扩展较弱，比如TC依赖数据库，瓶颈将会在数据库上。
 
+
+<br/>  
+<br/>  
+<br/>  
+<br/> 
+
 <br/>  
 <br/>  
 <br/>  
 <br/>  
-<br/>  
-<br/>  
-<br/>  
-<br/>    
+
+# 草稿
 =seata-spring-boot-starter 负责加载相关的配置
 
 Client 有bootstrap，manager, client初始化一些processd到map，并连接server到manager，再bootstrap启动netty，进行handler，hander持有各种处理器的processord的map。
