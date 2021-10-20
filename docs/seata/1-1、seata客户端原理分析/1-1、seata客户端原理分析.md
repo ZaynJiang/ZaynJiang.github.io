@@ -1,7 +1,7 @@
 ## 1. 概要
-&emsp;Seata是一款优秀的开源分布式事务框架，提供了4种事务模式：at、tcc、xa、saga。
-其中at模式是seata主打的代码无侵入事务模式，默认隔离性为读未提交；Tcc性能较好，但是需要修改业务，比如拆分出一个中间状态，seata需要业务系统配合编写侵入型代码。Xa是严格按照两阶段提交实现，性能较差。Saga适合链路较长的事务场景，配合状态机配置一起使用，可能需要解决隔离性产生的问题，比如第一个参与者事务提交，接着这个事务的数据发生了变更，后面的事务回滚，那么第一个事务回滚不回来。
-下面我们主要介绍下at、tcc模式的使用，并分析下它们的实现机制。xa和saga因为不常用，我们再稍微了解下它们的原理。
+&emsp;Seata是一款优秀的开源分布式事务框架，提供了4种事务模式：at、tcc、xa、saga。  
+&emsp;其中at模式是seata主打的代码无侵入事务模式，默认隔离性为读未提交；Tcc性能较好，但是需要修改业务，比如拆分出一个中间状态，seata需要业务系统配合编写侵入型代码。Xa是严格按照两阶段提交实现，性能较差。Saga适合链路较长的事务场景，配合状态机配置一起使用，可能需要解决隔离性产生的问题，比如第一个参与者事务提交，接着这个事务的数据发生了变更，后面的事务回滚，那么第一个事务回滚不回来。  
+&emsp;下面我们主要介绍下at、tcc模式的使用，并分析下它们的实现机制。xa和saga因为不常用，我们再稍微了解下它们的原理。
 
 ## 2. seata的at模式
 ### 2.1. 使用介绍
@@ -23,13 +23,15 @@ at模式的整体请求流程为：
 ### 3.1. seata-spring-boot-starter 
 &emsp;&emsp;应用可以依赖官方提供的seata-spring-boot-starter包来初始化seata客户端，如果不依赖该包，则需要自行加载配置进行初始化。下面介绍seata-spring-boot-starter是如何初始化seata的。
 ### 3.2. GloableTransationalScanner初始化  
-&emsp;&emsp;starter利用了springapo自动代理机制对一些bean进行代理，GloableTransationalScanner针对标有GloableTransaction注解的方法进行代码增强（注册全局事务、回滚全局事务等），同时利用afterPropertiesSet进行处理客户端的初始化。  
-eataAutoConfiguration-》GlobalTransactionScanner-》initClients  
+&emsp;&emsp;starter利用了springaop自动代理机制对一些bean进行代理，GloableTransationalScanner针对标有GloableTransaction注解的方法进行代码增强（注册全局事务、回滚全局事务等），同时利用afterPropertiesSet进行处理客户端的初始化。  
+seataAutoConfiguration-》GlobalTransactionScanner-》initClients  
 ![](图片4.png)  
 ### 3.3. 初始化TM、RM  
 客户端的初始化：  
 ![](图片5.png)  
-Seata的客户端有两种，Tm代表一个全局事务管理器，负责管理全局事务，可以进行全局事务的注册和提交。RM代码分支事务管理器，管理分支事务。  
+Seata的客户端有两种:  
+* Tm代表一个全局事务管理器，负责管理全局事务，可以进行全局事务的注册和提交。  
+* RM代码分支事务管理器，管理分支事务。  
 ### 3.4. 初始化TM  
 调用init方法  
 ![](图片6.png)  
@@ -40,7 +42,7 @@ Seata的客户端有两种，Tm代表一个全局事务管理器，负责管理�
 3. 启动netty  
    
 **注意：**  
-**&emsp;&emsp;Tm实例创建（new channelmanager，ClientHandler）TmClient init-> 1、注册处理器->接着int会reconnectChannel(让channelmanager持有连接tc的channel)->netty启动绑定ClientHandler(消息会获取具体的processor进行处理).**
+**&emsp;&emsp;Tm实例创建（new channelmanager，ClientHandler）TmClient init-> 注册处理器->接着int会reconnectChannel(让channelmanager持有连接tc的channel)->netty启动绑定ClientHandler(消息会获取具体的processor进行处理).**
 
 ### 3.5. 初始化RM  
 ![](图片9.png) 
@@ -120,12 +122,12 @@ commit请求放到队列中，有定时任务处理
 ![](图片35.png)  
 按照数据库类型批量删除undo日志  
 ![](图片36.png)  
-### 2.11. RM回滚  
+### 3.11. RM回滚  
 DataSourceManager的branchRollback
 UndoLogManager.undo(dataSourceProxy, xid, branchId)，大体是根据Undolog进行反解析并执行回滚操作。
 然后进行回滚日志的清理和提交。
 ![](图片37.png)  
-## 3. seata的TCC模式  
+## 4. seata的TCC模式  
 ![](图片38.png)  
 流程为：  
 1. 全局事务拦截器拦截到@GlobalTransational注解，调用TM开启全局事务
@@ -135,13 +137,13 @@ UndoLogManager.undo(dataSourceProxy, xid, branchId)，大体是根据Undolog进�
 5. TC收到TM的提交或回滚通知，遍历各TCC分支事务，逐个进行提交或回滚  
 
   
-### 3.1. 使用示例  
+### 4.1. 使用示例  
 接口发布：  
 ![](图片39.png)
 ![](图片40.png)  
-### 3.2. 全局事务的开启、提交、回滚分析  
+### 4.2. 全局事务的开启、提交、回滚分析  
 
-#### 3.2.1. TCC的初始化  
+#### 4.2.1. TCC的初始化  
 &emsp;&emsp;Seata 的 spring 模块会对涉及到分布式业务的 bean 进行处理。项目启动时，当 GlobalTransactionalScanner 扫描到 TCC 服务的 reference 时（即tcc事务参与方），会对其进行动态代理，即给 bean 织入 TCC 模式下的 MethodInterceptor 的实现类。tcc 事务发起方依然使用 @GlobalTransactional 注解开启，织入的是通用的 MethodInterceptor 的实现类  
 &emsp;&emsp;globalTransationscanner判断是否为TCC代理  
 ![](图片41.png)  
@@ -151,7 +153,7 @@ UndoLogManager.undo(dataSourceProxy, xid, branchId)，大体是根据Undolog进�
 通过反射拿到了TwoPhaseBusinessAction注解中声明的Commit方法和Rollback方法并封装成TCCResource对象，最终调用ResourceManager的registerResource方法。TCC模式下ResourceManger的实现为TCCResourceManager，AbstractRMHandler的实现为RMHandlerTCC。  
 最终会将资源注册至tc上去  
 ![](图片43.png)  
-#### 3.2.2. 开启tcc事务  
+#### 4.2.2. 开启tcc事务  
 同AT模式一样，通过GlobalTransactionalInterceptor实现
 拦截器添加开启事务  
 执行业务方法：  
@@ -160,12 +162,12 @@ UndoLogManager.undo(dataSourceProxy, xid, branchId)，大体是根据Undolog进�
   
 
 ![](图片44.png)  
-#### 3.2.3. 分支事务的注册  
+#### 4.2.3. 分支事务的注册  
 &emsp;&emsp;Tcc的拦截器使用一个ActionInterceptorHandler来帮助进行分支事务的注册，这个TCC的拦截器主要是拦截定义的tcc方法接口，只要执行了这个方法就会被分支事务功能增强。
-并获取branchId
+并获取branchId  
 ![](图片45.png)
 ![](图片46.png)  
-### 3.3. 全局提交  
+### 4.3. 全局提交  
 和at模式一样，最终调用的DefaultGlobalTransaction的commit方法，最终会rpc调用tc  
 ![](图片47.png)  
 总结一下全局事务提交的大致流程：
@@ -177,17 +179,17 @@ UndoLogManager.undo(dataSourceProxy, xid, branchId)，大体是根据Undolog进�
 下面为rm接收到tc的commit请求的代码  
 ![](图片48.png)  
 Tc如何接受消息并处理，在本文暂不梳理。  
-### 3.4. 全局回滚
+### 4.4. 全局回滚
 和at模式一样，最终调用的DefaultGlobalTransaction的rollback方法，最终会rpc调用tc  
 
-## 4. seata的其它模式简要介绍
-### 4.1. XA模式
+## 5. seata的其它模式简要介绍
+### 5.1. XA模式
 ![](图片49.png)  
 Branchid 在xa的start之前  
-### 4.2.SAGA模式  
+### 5.2. SAGA模式  
 参考http://seata.io/zh-cn/blog/design-more-flexable-application-by-saga.html  
 ![](图片50.png)  
-## 5. 总结
+## 6. 总结
 * AT、TCC、SAGAX属于补偿性事务，XA属于强事务，因此性能比较差
 * Seata使用了大量的spi机制，比如不同类型的资源管理器、消息事务管理器来方便根据不同模式使用不同的代码逻辑，在以后的编程中可以借鉴
 * 使用时需要注意，AT模式为读未提交
