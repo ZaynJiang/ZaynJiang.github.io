@@ -13,7 +13,7 @@ kafka作为消息中间件时，消息的量一般是巨大的。并且一台服
 ### 1.2 kafka分区的策略
 首先消息在哪一个分区是由生产者决定的，需要生产者来决定发送到哪个一个分区。分区策略就是生产者通过的一种算法将消息发送到某一分区中。kafka提供了默认的分区策略，我们也可以自定义策略发送。如何进行自定义分区策略呢？需要实现org.apache.kafka.clients.producer.Partitioner接口，其中的参数有主题、borker数等信息。我们可以通过这些信息进行灵活的进行分区。常见的分区策略有如下的策略：  
 * 轮询策略  
-就是按顺序一个分区放一条。
+就是按顺序一个分区放一条。  
 ![](轮询策略.png)
 * 随机策略  
 随机策略如上图所示，是按照一定的随机算法，随机的将消息分到分区上。这种算法在实际上表现没有轮询算法好，老版本的默认算法为随机算法，新版的算法已经改为轮询了。
@@ -125,3 +125,43 @@ kafka的消息格式分为两种：v1和v2（0.11.0.0版本以后）
 对于物理资源：  
 * 使用 Snappy 算法占用的网络带宽最多，zstd 最少，这是合理的，因为 zstd 就是要提供超高的压缩比；
 * 在 CPU 使用率方面，各个算法表现得差不多，只是在压缩时 Snappy 算法使用的 CPU 较多一些，而在解压缩时 GZIP 算法使用更多的 CPU。
+
+## 5 消息可靠性保障  
+### 5.1 可靠性保障的概念  
+对于一个消息系统，可靠性保障的含义一般有三种：  
+* 最多一次，消息最多被发送一次，可能会丢失，但是绝不会重复发送
+* 至少一次，消息不会丢失，但是绝对不会丢失
+* 精确一次，不会丢失，也不会被重复发送  
+  
+&emsp;&emsp;目前kafka的消息保障位 至少一次 的保障。比如，broker其实已经提交了，但是producer由于网络原因认为没有成功，可能会导致重复发送。如果在 producer 禁用了重试，则就是 最多一次 保障， 最多被发送一次，可能会丢失。不同的业务场景要求可能不一样，需要选择适合的可靠性保障。当然 精确一次 是最好的，kafka是支持这种精确一次 语义来保障的。
+
+### 5.2 基本的kafka 精确一次保障  
+&emsp;&emsp;在produce设置enable.idempotence=true，其它的代码不用改动，Producer 就成了幂等性 Producer，broker端会自动去重，即在 Broker 端多保存一些字段。当 Producer 发送了具有相同字段值的消息后，Broker 能够自动知晓这些消息已经重复了，进而丢掉重复的消息。这样即使Producer发送重复消息也无所谓了。但这种幂等性存在局限性：
+* 只能保障单分区上的幂等性，如果消息变成其它分片了，就失效了
+* 只能是会话级别，如果producer重启了，也会失效。
+
+### 5.3 kafka发送消息事务
+&emsp;&emsp;Kafka 自 0.11 版本开始也提供了对事务的支持，目前主要是在 read committed 隔离级别上做事情。它能保证多条消息原子性地写入到目标分区。  
+&emsp;&emsp;kafka如何开启事务消息呢？  
+1. enable.idempotence = true，这个和幂等性消息一样
+2. 在Producer 设置transctional. id
+3. producer代码做一些改动
+```
+    //初始化事务
+    producer.initTransactions();
+    try {
+        //开启事务
+        producer.beginTransaction();
+        producer.send(record1);
+        producer.send(record2);
+        //提交事务
+        producer.commitTransaction();
+    } catch (KafkaException e) {
+                producer.abortTransaction();
+    }
+```
+4. 在 Consumer 端需要设置 isolation.level  
+* read_uncommitted，默认，如果有失败的消息，这个也能读到
+* read_committed，表明 Consumer 只会读取事务型 Producer 成功提交事务写入的消息。  
+
+&emsp;&emsp;通过上述的设置就能保证，两个分区的消息要么同时成功要么同时失败，同时也就能保证了跨分区的消息的幂等性，但是有得必有失，幂等性消息本来就有损耗消息了，Producer 的性能要更差。实际使用中，我们要合理评估常见使用，不可盲目。
