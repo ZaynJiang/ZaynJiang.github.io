@@ -98,7 +98,7 @@ Compact 的过程就是扫描日志的所有消息，剔除那些过期的消息
      }
  ```
  **注意：自动提交很方便，不会发生消息丢失，但是会发生重复消费，比如宕机了，位移还没提交上去或者发生了rebalance,位移还没提交上去，分区重新分配，重写消费**
-
+ **注意：poll 方法的逻辑是先提交上一批消息的位移，再处理下一批消息，因此它能保证不出现消费丢失的情况。但自动提交位移的一个问题在于，它可能会出现重复消费**
  ### 3.2. 手动提交   
  手动提交支持两种提交方式，同步和异步
  * KafkaConsumer#commitSync()  
@@ -115,5 +115,113 @@ Compact 的过程就是扫描日志的所有消息，剔除那些过期的消息
     }
   }
   ```
- * KafkaConsumer#commitAsync()
-它会有一个回调函数可以记录提交后的状态。
+  这种提交存在明显的缺陷：调用 commitSync() 时，Consumer 程序会处于阻塞状态，会影响整个应用程序的 TPS。
+ * KafkaConsumer#commitAsync()，异步提交，它会立即返回，不会阻塞，Kafka 提供了回调函数（callback）
+```
+while (true) {
+            ConsumerRecords<String, String> records =
+                    consumer.poll(Duration.ofSeconds(1));
+            process(records); // 处理消息
+            consumer.commitAsync((offsets, exception) -> {
+                if (exception != null)
+                    handle(exception);
+            });
+        }
+```
+这种提交也存在缺陷：提交失败的无法重试，并且异步重试也没有意义，因为它是异步操作，倘若提交失败后自动重试，那么它重试时提交的位移值可能早已经“过期”或不是最新值了。因此，异步提交的重试其实没有意义。
+ ### 3.3. 最佳提交方式
+ 上面每一种都存在缺陷，我们需要达到，同步提交不影响tps，异步提交又能够防止网络抖动的影响 ，却不想自己进行重试。于是代码可以如下编写：
+ ```
+        try {
+            while (true) {
+                ConsumerRecords<String, String> records =
+                        consumer.poll(Duration.ofSeconds(1));
+                process(records); // 处理消息
+                commitAysnc(); // 使用异步提交规避阻塞
+            }
+        } catch (Exception e) {
+            handle(e); // 处理异常
+        } finally {
+            try {
+                consumer.commitSync(); // 最后一次提交使用同步阻塞式提交
+            } finally {
+                consumer.close();
+            }
+        }
+ ``` 
+ 它的逻辑关键点是：
+ *  commitAsync() 避免程序阻塞
+ *  commitSync()  能够保存Consumer 关闭前正确的位移数据
+
+ ### 3.4. 大批量消费提交方式
+ 如果一次poll了大量的数据，如果出现了异常，那么会出现大量消息重复消费的情况。如何避免呢？  
+ 我们可以将大批量分批提交，防止消息重置
+```
+private Map<TopicPartition, OffsetAndMetadata> offsets = new HashMap<>();
+int count = 0;
+……
+while (true) {
+            ConsumerRecords<String, String> records = 
+	consumer.poll(Duration.ofSeconds(1));
+            for (ConsumerRecord<String, String> record: records) {
+                        process(record);  // 处理消息
+                        offsets.put(new TopicPartition(record.topic(), record.partition()),
+                                    new OffsetAndMetadata(record.offset() + 1)；
+                        if（count % 100 == 0）
+                                    consumer.commitAsync(offsets, null); // 回调处理逻辑是 null
+                        count++;
+	}
+}
+```
+### 3.5. 提交异常  
+&emsp;&emsp;commitSync支持提交异常自动重试的。 在这里讲的提交异常主要是CommitFailedException，这个异常的含义是指：  
+&emsp;&emsp;从源码中翻译过来原因是消费者组已经开启了 Rebalance 过程，并且将要提交位移的分区分配给了另一个消费者实例。出现这个情况的原因是，你的消费者实例连续两次调用 poll 方法的时间间隔超过了期望的 max.poll.interval.ms 参数值。大白话就是：你丫的消费太慢了，我换个人来消费。遇到这种异常可以通过如下方式解决：  
+* 增加期望的时间间隔 max.poll.interval.ms 参数值。
+* 减少 poll 方法一次性返回的消息数量，即减少 max.poll.records 参数值。
+  
+具体在哪些场景可能会遇到这种异常呢？
+#### 3.5.1 真的消费太慢了  
+超过太长实践才提交位移，如下代码：
+```
+while (true) {
+    ConsumerRecords<String, String> records = 
+		consumer.poll(Duration.ofSeconds(1));
+  
+    Thread.sleep(6000L);
+    consumer.commitSync();
+}
+``` 
+解决方式，推荐优先级高 ---》低：
+* 缩短单条消息处理的时间
+* 调大max.poll.interval.ms参数
+* 一次消费少点，其实也是缩短消息的消费时间
+* 下游多线程消费，实现较困难。
+#### 3.5.2 冷门场景  
+&emsp;&emsp;Kafka Java Consumer 端还提供了一个名为 Standalone Consumer 的独立消费者。它没有消费者组的概念 。如果独立消费者groupid和普通消费者grouid重复了，那么提交时就会报错。该异常的原因比较冷门，但确实存在，排查问题时需要注意。
+
+## 4. 构建消费者TCP连接
+&emsp;&emsp;和producer不一样， KafkaProducr是在创建kafkaProducer实例的时候创建tcp连接的，而KafkaConsumer是在在调用 KafkaConsumer.poll来创建TCP连接的。 
+
+### 4.1. 创建TCP连接时机
+### 4.1.1. 发起 FindCoordinator请求
+&emsp;&emsp;前面我们知道消费者需要知道coordinator的位置，消费者程序会向集群中当前负载最小（消费者连接的所有 Broker 中，谁的待发送请求最少）的那台 Broker 发送请求
+### 4.1.2. 连接协调者时
+&emsp;&emsp;上一步返回了这个消费者实例对应的coordinator的broker后，创建连向该 Broker 的 Socket 连接
+### 4.1.3. 消费数据时
+&emsp;&emsp;消费者会为每个要消费的分区创建与该分区领导者副本所在 Broker 连接的 TCP。举个例子，假设消费者要消费 5 个分区的数据，这 5 个分区各自的领导者副本分布在 4 台 Broker 上，那么该消费者在消费时会创建与这 4 台 Broker 的 Socket 连接。
+### 4.2. TCP连接的数量
+&emsp;&emsp;建立tcp连接的过程：  
+* 一无所知获取，建立配置的server的第一个连接
+* 复用刚刚的连接，获取集群的元数据
+* 发送查询coordinatror信息的连接
+* 从上一步的结果，获取协调者的地址并建立了连接
+* 消费者建立所有的要消费的主分区和领导者副本分区的连接
+### 4.3. 关闭连接
+消费者关闭 Socket 也分为主动关闭和 Kafka 自动关闭。
+* 手动调用 KafkaConsumer.close() 方法，或者是执行 Kill 命令
+*  connection.max.idle.ms（默认值是 9 分钟），如果某个 Socket 连接上连续 9 分钟都没有任何请求“过境”的话，那么消费者会强行“杀掉”这个 Socket 连接。
+
+**注意:在后面findcoordinator的连接会关掉，只会有后面两类 TCP 连接存在**
+
+### 4.4. 建立连接的思考
+目前是建立了很多连接。有些连接建立后后面会把它关闭掉，这样会存在一些浪费。因为开始建立的连接为了后面获取最终的连接而建立的，后面要创建的连接其实有可能在前面创建了，然后又关闭了，这样造成一定的浪费。未来应该考虑使用< 主机名、端口、ID>三元组的方式来定位 Socket 资源，这样或许能够让消费者程序少创建一些 TCP 连接。

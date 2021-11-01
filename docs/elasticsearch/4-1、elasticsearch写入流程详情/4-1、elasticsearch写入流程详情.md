@@ -12,7 +12,7 @@
 如上面的代码所示，我们使用lucence的上面的接口就可以完成文档的增删改操作。在lucence中有一个核心的类IndexWriter负责数据写入和索引相关的工作。
 ```
 //1. 初始化indexwriter对象
-IndexWriter writer = new IndexWriter(new NIOFSDirectory(Paths.get("/index")), new IndexWriterConfig());
+IndexWriter writer = new IndexWriter(new Directory(Paths.get("/index")), new IndexWriterConfig());
 
 //2. 创建文档
 Document doc = new Document();
@@ -28,9 +28,8 @@ writer.commit();
 以上代码演示了最基础的lucence的写入操作，主要涉及到几个关键点：
 * 初始化，Directory是负责持久化的，他的具体实现有很多，有本地文件系统、数据库、分布式文件系统等待，elasticsearch默认的实现是本地文件系统。
 * Document就是es中的文档，FiledType定义了很多索引类型。这里列举几个常见的类型：
-  * stored，字段是否保存
-  * tokenized，代表是否做分词
-  * indexOptions(NONE、DOCS、DOCS_AND_FREQS、DOCS_AND_FREQS_AND_POSITIONS、DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS)，倒排索引的选项
+  * stored，字段原始内容存储
+  * indexOptions(NONE、DOCS、DOCS_AND_FREQS、DOCS_AND_FREQS_AND_POSITIONS、DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS)，倒排索引的选项，存储词频、位置信息等。
   * docValuesType，正排索引，建立一个docid到field的的一个列存储。
   * 一些其它的类型。
 * IndexWriter在doc进行commit后，才会被持久化并且是可搜索的。
@@ -41,6 +40,14 @@ writer.commit();
   * FlushPolicy，flush的策略
   * Analyzer，定制分词器
   * IndexDeletionPolicy，提交管理
+
+PS：在elasticsearch中，为了支持分布式的功能，新增了一些系统默认字段：  
+* _uid，主键，在写入的时候，可以指定该Doc的ID值，如果不指定，则系统自动生成一个唯一的UUID值。
+* _version，版本字段，version来保证对文档的变更正确的执行，更新文档时有用。
+* _source，原始信息，如果后面维护不需要reindex索引可以关闭该字段，从而节省空间
+* _routiong，路由字段。
+* 其它的字段
+  
 
 ### 2.2. 并发模型
 &emsp;&emsp;上面我们知道indexwriter负责了elasticsearch索引增删改查。那它具体是如何管理的呢？  
@@ -97,6 +104,7 @@ elasticsearch的refresh对应于lucene的flush，elasticsearch的flush对应于l
 
 ### 3.2. 详细流程  
 #### 3.2.1. 协调节点内部流程  
+![](整体写入详情流程图.png)  
 &emsp;&emsp;如上图所示：
 * 协调节点会对请求检查放在第一位，如果如果有问题就直接拒绝。主要有长度校验、必传参数、类型、版本、id等等
 * pipeline，用户可以自定义设置处理器，比如可以对字段切割或者新增字段，还支持一些脚本语言，可以查看官方文档编写。
@@ -165,7 +173,7 @@ elasticsearch的索引层有个一waitforactiveshards参数代表写入的时候
         }
     }
 ```
-在早期版本，其实时异步请求副本分片了的，发现丢失数据的风险很大，就改成了改成Primary等Replica返回后再返回给客户端。如果Replica写入失败，ES会执行一些重试逻辑等，但最终并不强求一定要在多少个节点写入成功。在返回的结果中，会包含数据在多少个shard中写入成功了，多少个失败了，如果一个Replica写失败了，Primary会将这个信息报告给Master。
+&emsp;&emsp;在早期版本，其实时异步请求副本分片了的，发现丢失数据的风险很大，就改成了改成Primary等Replica返回后再返回给客户端。如果Replica写入失败，ES会执行一些重试逻辑等，但最终并不强求一定要在多少个节点写入成功。在返回的结果中，会包含数据在多少个shard中写入成功了，多少个失败了，如果一个Replica写失败了，Primary会将这个信息报告给Master。  
 &emsp;&emsp;elasticsearch的数据副本模型和kafka类似，采用的是ISR机制，ES里面有一个：in-sync copies概念，即：client向primay 发起index一篇文档操作，primary 将index操作同步给 in-sync copies里面的节点，然后再返回ACK给client。in-sync copies里面的节点是动态变化的(比如网络分区情况下，只有primary shard所在的节点自己在in-sync copies里面了，这里就有SPOF问题)，因此又提供了wait_for_active_shards参数来防止SPOF：wait_for_active_shards=2意味着 client的index操作必须在2个节点上同步成功了，才能返回ack给client。ES里面存在着dirty read。
 index.write.wait_for_active_shards参数是控制写的前提条件。in-sync 关注的是写的过程
 
@@ -179,8 +187,6 @@ index.write.wait_for_active_shards参数是控制写的前提条件。in-sync �
 这个过程和主分片节点的流程基本一样，有些校验可能略微不同，最终都会写入lucence索引。 
 
 <br/>
-
-#### 3.2.4. 异常情况总结
 
 ## 4. 总结  
 &emsp;&emsp;本文介绍了Elasticsearch的写入流程和一些比较详细的机制，最后我们总结下开头我们提出的问题，一个分布式系统需要满足很多特性，大部分特性都能够在elasticsearch中得到满足。
