@@ -59,7 +59,41 @@ public class Singleton {
 ## 7. java线程生命周期
 ### 7.1. 线程的概念
 线程是操作系统里的一个概念，不同的开发语言如 Java等都对其进行了封装，线程和时间有关，它有一个生命周期。我们只需要关注线程状态的转换就可以。线程是一个通用性的概念。  
-![](通用线程状态.png)
-## 8. java进程的线程数
+![](通用线程状态.png)  
+* 初始状态，编程语言的创建，此刻操作系统还没有创建
+* 可运行状态，可以分配 CPU 执行
+* 有空闲的 CPU 时，操作系统会将其分配给一个处于可运行状态的线程
+* 如果调用一个阻塞的 API，线程的状态就会转换到休眠状态，同时释放 CPU 使用权，休眠状态的线程永远没有机会获得 CPU 使用权，当等待的事件出现了，线程就会从休眠状态转换到可运行状态。
+* 线程执行完或者出现异常就会进入终止状态，线程的生命周期就结束了。
+<br>
+### 7.2. java线程状态
+java语言对操作系统的线程进行了进一步的封装，新增了几个状态，一共有：
+* NEW（初始化状态）
+* RUNNABLE（可运行 / 运行状态）
+* BLOCKED（阻塞状态）
+* WAITING（无时限等待）
+* TIMED_WAITING（有时限等待）
+* TERMINATED（终止状态）  
+  
+其实上面的阻塞或者等待状态都是属于操作系统的休眠状态（BLOCKED、WAITING、TIMED_WAITING ），只是说java对这几种状态的转换机制做了区分，只要我们理解它们转换状态的机制，就能记住这些状态。
+### 7.3. java线程的流转  
+#### 7.3.1. runnable->blocked  
+只有一种场景会触发这种转换，就是线程等待 synchronized 的隐式锁。即：
+* synchronized 修饰的代码执行时，代码块同一时刻只允许一个线程执行，其他线程只能等待，等待的线程就会从 RUNNABLE 转换到 BLOCKED 状态
+* 等待的线程获得 synchronized 隐式锁时，就又会从 BLOCKED 转换到 RUNNABLE 状态    
+
+**注意：线程调用阻塞式 API 时，是否会转换到 BLOCKED 状态呢？在操作系统层面，线程是会转换到休眠状态的，但是在 JVM 层面，Java 线程的状态不会发生变化，也就是说 Java 线程的状态会依然保持 RUNNABLE 状态。JVM 层面并不关心操作系统调度相关的状态**
+#### 7.3.1. runnable->WAITING
+一共有三个场景会产生该转换：  
+*  synchronized 隐式锁的线程，调用无参数的 Object.wait() 
+* 调用无参数的 ThreadA.join() 方法,意思就是当前线程，使用threadA调用join（）方法，threadA线程没有执行完，会watting阻塞，直到执行完毕。
+* LockSupport.park()，当前线程会阻塞，线程的状态会从 RUNNABLE 转换到 WAITING，并发包中的锁都是基于它实现的，LockSupport.unpark(Thread thread) 可唤醒目标线程，目标线程的状态又会从 WAITING 状态转换到 RUNNABLE
+
+#### 7.3.1. runnable -> TIMED_WAITING
+
+#### 7.3.1. runnable -> TERMINATED
+
+## 8. java进程的线程数  
+
 ## 9. java线程安全
 ## 10. 并发程序开发思路
