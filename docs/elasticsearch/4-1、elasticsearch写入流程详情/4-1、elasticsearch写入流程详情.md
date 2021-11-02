@@ -102,9 +102,9 @@ elasticsearch的refresh对应于lucene的flush，elasticsearch的flush对应于l
   
 注意上面的写入延时=主分片延时+max(Replicas Write),即写入性能如果有副本分片在，就至少是写入两个分片的延时延时之和。
 
-### 3.2. 详细流程  
-#### 3.2.1. 协调节点内部流程  
+### 3.2. 详细流程
 ![](整体写入详情流程图.png)  
+#### 3.2.1. 协调节点内部流程  
 &emsp;&emsp;如上图所示：
 * 协调节点会对请求检查放在第一位，如果如果有问题就直接拒绝。主要有长度校验、必传参数、类型、版本、id等等
 * pipeline，用户可以自定义设置处理器，比如可以对字段切割或者新增字段，还支持一些脚本语言，可以查看官方文档编写。
@@ -127,10 +127,10 @@ elasticsearch的refresh对应于lucene的flush，elasticsearch的flush对应于l
 ![](update.png)  
 * 读取同id的完整Doc, 记录版本为version1。
 * 将version1的doc和update请求的Doc合并成一个Doc，更新内存中的VersionMap。获取到完整Doc后，版本加1。进入后续的操作。
-* 后面的操作加锁。
+* 后面的操作会加锁。
 * 第二次从versionMap中读取该doc的的最大版本号version2，这里基本都会从versionMap中获取到。
-* 检查版本是否冲突，判断版本是否一致（冲突），如果发生冲突，则回到第一步，重新执行查询doc合并操作。如果不冲突，则执行最新的Add index请求。
-* 在Index Doc时，首先将Version + 1得到V3，再将Doc加入到Lucene中去，Lucene中会先删同id下的已存在doc id，然后再增加新Doc。写入Lucene成功后，将当前V3更新到versionMap中。
+* 检查版本是否冲突，判断版本是否一致（冲突），如果发生冲突，则回到第一步，重新执行查询doc合并操作。如果不冲突，则执行最新的添加doc请求。
+* 在add Doc时，首先将Version + 1得到V3，再将Doc加入到Lucene中去，Lucene中会先删同id下的已存在doc id，然后再增加新Doc。写入Lucene成功后，将当前V3更新到versionMap中。
 * 释放锁，更新流程就结束了。  
 
 &emsp;&emsp;其实就是乐观锁的机制，每次更新一次版本号加 1 ，不像关系式数据库有事物，你在更新数据，可能别人也在更新的话，就把你的给覆盖了。你要更新的时候，先查询出来，记住版本号，在更新的时候最新的版本号和你查询的时候不一样，说明别人先更新了。你应该读取最新的数据之后再更新。
@@ -173,11 +173,11 @@ elasticsearch的索引层有个一waitforactiveshards参数代表写入的时候
         }
     }
 ```
-&emsp;&emsp;在早期版本，其实时异步请求副本分片了的，发现丢失数据的风险很大，就改成了改成Primary等Replica返回后再返回给客户端。如果Replica写入失败，ES会执行一些重试逻辑等，但最终并不强求一定要在多少个节点写入成功。在返回的结果中，会包含数据在多少个shard中写入成功了，多少个失败了，如果一个Replica写失败了，Primary会将这个信息报告给Master。  
-&emsp;&emsp;elasticsearch的数据副本模型和kafka类似，采用的是ISR机制，ES里面有一个：in-sync copies概念，即：client向primay 发起index一篇文档操作，primary 将index操作同步给 in-sync copies里面的节点，然后再返回ACK给client。in-sync copies里面的节点是动态变化的(比如网络分区情况下，只有primary shard所在的节点自己在in-sync copies里面了，这里就有SPOF问题)，因此又提供了wait_for_active_shards参数来防止SPOF：wait_for_active_shards=2意味着 client的index操作必须在2个节点上同步成功了，才能返回ack给client。ES里面存在着dirty read。
-index.write.wait_for_active_shards参数是控制写的前提条件。in-sync 关注的是写的过程
-
-
+&emsp;&emsp;在以前的版本中，其实是异步请求副本分片的，后来觉得丢失数据的风险很大，就改成同步发送了，即Primary等Replica返回后再返回给客户端。如果副本有写入失败的，elasticsearch会进行一些重试，但最终并不强求一定要在多少个节点写入成功。在返回的结果中，会包含数据在多少个shard中写入成功了，多少个失败了，如果有副本上传失败，会将失败的副本上报至Master。  
+<br>
+PS：elasticsearch的数据副本模型和kafka副本很相似，都是采用的是ISR机制。即：ES里面有一个：in-sync copies概念，主分片会在索引的时候会同步数据至in-sync copies里面所有的节点，然后再返回ACK给client。而in-sync copies里面的节点是动态变化的，如果出现极端情况，在in-sync copies列表中只有主分片一个的话，这里很容易出现SPOF问题，这个是在elasticsearch中是如何解决的呢？  
+&emsp;&emsp;就是依靠上面我们分析的wait_for_active_shards参数来防止SPOF，如果配置index的wait_for_active_shards=3就会提前校验必须要有三个活跃的分片才会进行同步，否则拒绝请求。对于可靠性要求高的索引可以提升这个值。
+<br>
 **PS：为什么是先写lucence再写入translog呢，这是因为写入lucence写入时会有数据检查，有可能会写入失败，这个是发生在内存之中的，如果先写入磁盘的translog的话，还需要回退日志，比较麻烦**
 
 <br/>
@@ -196,6 +196,5 @@ index.write.wait_for_active_shards参数是控制写的前提条件。in-sync �
   * lucence自身独立线程维护各自的Segment，多线程需要竞争的资源更少，性能更好。
   * update等操作使用versionMap缓存，减少io
   * refresh至操作系统缓存
-  * 副本写入优化
 * 原子性、隔离性：使用版本的乐观锁机制保证的。
 * 实时性：elasticsearch设计的是近实时的，如果同步进行refresh、flush将大幅降低性能，所以是”攒一部分数据“再刷入磁盘，不过实时写入的tranlog日志还是可以实时通过id查到的。
