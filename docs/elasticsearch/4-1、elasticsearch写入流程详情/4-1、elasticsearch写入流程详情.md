@@ -87,9 +87,7 @@ elasticsearch的refresh对应于lucene的flush，elasticsearch的flush对应于l
 <br/>
 
 #### 2.2.6. 小结 
-&emsp;&emsp;在这里我们稍微总结一下，一个elasticsearch索引分配对应一个完整的lucene索引, 而一个lucene索引对应多个segment。我们在构建同一个lucene索引的时候, 可能有多个线程在并发构建同一个lucene索引, 这个时候每个线程会对应一个DocumentsWriterPerThread, 而每个 DocumentsWriterPerThread会对应一个index buffer. 在执行了flush以后, 一个 DocumentsWriterPerThread会生成一个segment。  
-&emsp;&emsp;对于index buffer和elasticsearch node的关系的话, 那就是在索引期间, 一个es node对应多个index buffer, 至于对应几个index buffer, 那就取决于当前有几个DocumentsWriterPerThread, 也就是说有几个并发线程在写同一个elasticsearch node的lucene索引
-
+&emsp;&emsp;在这里我们稍微总结一下，一个elasticsearch索引的一个分片对应一个完整的lucene索引, 而一个lucene索引对应多个segment。我们在构建同一个lucene索引的时候, 可能有多个线程在并发构建同一个lucene索引, 这个时候每个线程会对应一个DocumentsWriterPerThread, 而每个 DocumentsWriterPerThread会对应一个index buffer. 在执行了flush以后, 一个 DocumentsWriterPerThread会生成一个segment。
 
 ## 3. Elasticsearch的写
 ### 3.1. 宏观看Elasticsearch请求
@@ -126,7 +124,7 @@ elasticsearch的refresh对应于lucene的flush，elasticsearch的flush对应于l
 #### 3.2.2.2. update  
 ![](update.png)  
 * 读取同id的完整Doc, 记录版本为version1。
-* 将version1的doc和update请求的Doc合并成一个Doc，更新内存中的VersionMap。获取到完整Doc后，版本加1。进入后续的操作。
+* 将version1的doc和update请求的Doc合并成一个Doc，更新内存中的VersionMap。获取到完整Doc后。进入后续的操作。
 * 后面的操作会加锁。
 * 第二次从versionMap中读取该doc的的最大版本号version2，这里基本都会从versionMap中获取到。
 * 检查版本是否冲突，判断版本是否一致（冲突），如果发生冲突，则回到第一步，重新执行查询doc合并操作。如果不冲突，则执行最新的添加doc请求。

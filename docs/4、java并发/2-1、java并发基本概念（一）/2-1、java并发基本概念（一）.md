@@ -77,23 +77,62 @@ java语言对操作系统的线程进行了进一步的封装，新增了几个�
   
 其实上面的阻塞或者等待状态都是属于操作系统的休眠状态（BLOCKED、WAITING、TIMED_WAITING ），只是说java对这几种状态的转换机制做了区分，只要我们理解它们转换状态的机制，就能记住这些状态。
 ### 7.3. java线程的流转  
-#### 7.3.1. runnable->blocked  
+#### 7.3.1. new->runnable  
+java刚创建出来的 Thread 对象就是 NEW 状态，java创建线程有两种方法。一种是继承thread，另一种是实现runaable接口，此时但操作系统还没有感知到，需要调用线程对象的start的方法。然后就转变为RUNNABLE。
+```
+// Task
+class Task implements Runnable {
+  @Override
+  public void run() {
+    //do something
+  }
+}
+Thread thread = new Thread(new Task());
+```
+#### 7.3.2. runnable->blocked  
 只有一种场景会触发这种转换，就是线程等待 synchronized 的隐式锁。即：
 * synchronized 修饰的代码执行时，代码块同一时刻只允许一个线程执行，其他线程只能等待，等待的线程就会从 RUNNABLE 转换到 BLOCKED 状态
 * 等待的线程获得 synchronized 隐式锁时，就又会从 BLOCKED 转换到 RUNNABLE 状态    
 
 **注意：线程调用阻塞式 API 时，是否会转换到 BLOCKED 状态呢？在操作系统层面，线程是会转换到休眠状态的，但是在 JVM 层面，Java 线程的状态不会发生变化，也就是说 Java 线程的状态会依然保持 RUNNABLE 状态。JVM 层面并不关心操作系统调度相关的状态**
-#### 7.3.1. runnable->WAITING
+#### 7.3.3. runnable->WAITING
 一共有三个场景会产生该转换：  
 *  synchronized 隐式锁的线程，调用无参数的 Object.wait() 
 * 调用无参数的 ThreadA.join() 方法,意思就是当前线程，使用threadA调用join（）方法，threadA线程没有执行完，会watting阻塞，直到执行完毕。
 * LockSupport.park()，当前线程会阻塞，线程的状态会从 RUNNABLE 转换到 WAITING，并发包中的锁都是基于它实现的，LockSupport.unpark(Thread thread) 可唤醒目标线程，目标线程的状态又会从 WAITING 状态转换到 RUNNABLE
 
-#### 7.3.1. runnable -> TIMED_WAITING
+#### 7.3.4. runnable -> TIMED_WAITING。  
+这个一共有5种场景可以转化
+* Thread.sleep(long millis) 
+* 获取了synchronized的隐式锁后，Object.wait(long timeout) 
+* Thread.join(long millis) 
+* 调用带超时参数的 LockSupport.parkNanos(Object blocker, long deadline) 方法
+* 调用带超时参数的 LockSupport.parkUntil(long deadline) 
+  
+所以这里 TIMED_WAITING 和 WAITING 状态的区别就是是否有超时事件
 
-#### 7.3.1. runnable -> TERMINATED
+#### 7.3.5. runnable -> TERMINATED
+如果一个线程种由异常抛出会导致线程终止，会进入这个状态，或者比如我们一个线程等待网络读写，有时候不希望它一直等下去，想直接终止如何做呢？  
+* stop方法, 该会直接终止线程，不过不建议使用了。  
+  这个操作很危险，比如线程持有一个ReentrantLock锁，正常情况下，需要释放锁的，但是直接终止会释放不了锁，后面其它的线程将凉凉了。  类似于suspend() 、resume() 都不建议去使用了。  
 
-## 8. java进程的线程数  
+**PS：隐式锁还是可以释放滴。block不能响应中断。**
+* interrupt()方法， 当调用了线程的interrupt的方法，将会告知线程你被中断了，你看着办吧。java由两种方式告知
+  * 异常通知，比如调用wait()、join()、sleep() 方法就会要捕获一个InterruptedException异常，如果出现了该异常，就代表该线程被终止了，你需要处理后事了
+  * 自己检测，如果方法没有这种方法调用，可以在线程的代码中检测isInterrupted()是否为true，代表线程被终止了.
+  
+**注意：抛出interrupt异常后，中断标示会自动清除掉变成false,即isInterrupted为false**
+
+## 8. 系统线程设计 
+### 8.1 系统性能指标
+我们衡量一个系统的好坏，一般有两个核心指标：吞吐量和延迟；一个是空间维度，一个是时间维度。同等条件下延迟越低、吞吐量越大。我们如何来提升这两个指标呢？  
+一般有两个方向来去优化：
+* 处理速度
+* 压榨机器性能
+
+### 8.2 系统多线程的优势
+
+### 8.3 线程数设计
 
 ## 9. java线程安全
 ## 10. 并发程序开发思路
