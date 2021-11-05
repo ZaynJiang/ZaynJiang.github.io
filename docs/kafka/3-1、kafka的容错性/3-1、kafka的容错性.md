@@ -51,7 +51,55 @@ Kafka 把所有不在 ISR 中的存活副本都称为非同步副本,这些副�
 &emsp;&emsp;如上图所示，位移值及以上的属于未提交消息。也就是说，高水位上的消息是不能被消费者消费的。  
 &emsp;&emsp;日志末端位移（Log End Offset）表示副本写入下一条消息的位移值 
 <br>
-**Kafka 所有副本都有对应的高水位和 LEO 值。Leader 副本比较特殊，Kafka 使用 Leader 副本的高水位来定义所在分区的高水位。即：分区的高水位就是其 Leader 副本的高水位**
+**Kafka 所有副本都有对应的高水位和 LEO 值。Leader 副本比较特殊，Kafka 使用 Leader 副本的高水位来定义所在分区的高水位。即：分区的高水位就是其 Leader 副本的高水位**  
+&emsp;&emsp;leader副本所在的broker其实要保存了其所有的Follower 副本称为远程副本。Kafka 副本机制在运行过程中，会更新 Broker 1 上 Follower 副本的高水位和 LEO 值，同时也会更新 Broker 0 上 Leader 副本的高水位和 LEO 以及所有远程副本的 LEO，但它不会更新远程副本的高水位值。如图所示：
+![](远程副本.png)
 
-### 3.2. kafka高水位线机制
- 
+### 3.2. kafka副本同步机制
+![](hw副本同步机制.png)  
+&emsp;&emsp;如上图所示，为一个单分区且有两个副本的主题副本同步机制
+* 初始状态leader和follower的hw、leo、remote leo都为0
+* 生产者给主题分区发送一条消息后,leader副本磁盘写入消息,leo更新为1
+* follower拉取消息，Follower 副本也成功地更新 LEO 为 1
+* 在新一轮的拉取请求中，Follower 副本这次请求拉取的是位移值 =1 的消息
+* Leader 副本接收到此请求后，更新远程副本 LEO 为 1，然后更新 Leader 高水位为 1  
+  currentHW = min(currentHW, LEO-1，LEO-2，……，LEO-n)
+* leader将已更新过的高水位值 1 发送给 Follower
+* Follower 副本接收到以后，也将自己的高水位值更新成 1，更新高水位为 min(currentHW, currentLEO)
+* 一次完整的消息同步周期就结束了  
+  
+### 3.3. 高水位线机制缺陷
+&emsp;&emsp;Follower 副本的高水位更新需要一轮额外的拉取请求才能实现，并且如果有多个flower的情况，可能需要非常多轮的请求才能达到。即：  
+leader 副本高水位更新和 Follower 副本高水位更新在时间上是存在错配的。这种错配会导致数据不一致或者出现丢失。所以为了解决上面的
+问题，Kafka 0.11引入了Leader Epoch来解决。
+### 3.4. Leader Epoch
+Leader Epoch就是Leader的版本，它的组成为：
+* Epoch，一个单调增加的版本号。每当leader变更时就会增加该版本号。小版本号的 Leader 被认为是过期 Leader，为无效leader。
+* Start Offset，Leader 副本在该 Epoch 值上写入的首条消息的位移，比如leader epoch（0，0），表示0版本，从第0条消息保存消息，leader epoch(1,30)，表示发生了一次版本变更，从第30条开始保存消息。  
+
+&emsp;&emsp;Broker会内存种缓存其中所有的leader epoch数据，并会定期写入checkpoint文件持久化。当 Leader 副本写入消息到磁盘时，Broker 会尝试更新这部分缓存。如果该 Leader 是首次写入消息，那么 Broker 会向缓存中增加一个Leader Epoch，否则就不做更新。每次有 Leader 变更时，新的 Leader 副本会查询这部分缓存，取出对应的 Leader Epoch 的起始位移，以避免数据丢失和不一致的情况。  
+#### 3.4.1. 消息丢失
+每个副本都引入了新的状态来保存自己当leader时开始写入的第一条消息的offset以及leader版本。这样在恢复的时候完全使用这些信息而非HW来判断是否需要截断日志  
+* leader和follower都写入了两条消息
+* follower还没来的及更新自己的高水位就宕机了（依赖leader发送的更新hw的请求）
+* follower重启回来后，副本 B 会依赖自己的hw进行执行日志截断操作,将 LEO 值调整为之前的高水位值，也就是 1
+* 正常情况会，从 A 拉取消息，执行正常的消息同步，一切正常，leo会和A同步至2。
+* 非正常情况，副本 A 所在的 Broker 宕机了，副本 B 成为新的 Leader
+* 当 A 回来后，需要执行相同的日志截断操作，即将高水位调整为与 B 相同的值，也就是 1
+* 产生消息丢失，位移值为 1 的那条消息就从这两个副本中被永远地抹掉了。  
+  
+![](epoch机制.png)  
+&emsp;&emsp;引用 Leader Epoch 机制后  
+* 副本 B 重启回来后，需要向 A 发送一个特殊的请求去获取 Leader 的 LEO 值
+* **比较LEO 值比自己的大，且缓存的epoch的起始位移比当前的leo小，那么自己就无需执行任何日志截断**
+* 副本 A 宕机了，B 成为 Leader
+* 同样的逻辑，也不用执行日志截断
+* 因此两个副本的日志都得到保留
+* 后面写入数据，会产生新的 Leader Epoch和起始位移
+* 新的follower会根据新的epoch来进行截断日志判断了。
+#### 3.4.2. 消息不一致  
+![](epoch机制避免不一致.png)
+
+
+## 4. 总结  
+本文介绍了副本机制以及高水位线的数据同步机制
