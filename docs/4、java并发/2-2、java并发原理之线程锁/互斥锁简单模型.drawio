@@ -1,0 +1,41 @@
+<mxfile host="65bd71144e">
+    <diagram id="HIB12tsEuMiGJ2RbQobF" name="第 1 页">
+        <mxGraphModel dx="840" dy="683" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" background="#F1FAEE" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="5" value="" style="rounded=0;whiteSpace=wrap;html=1;sketch=0;fontColor=#1D3557;strokeColor=#457B9D;fillColor=none;" parent="1" vertex="1">
+                    <mxGeometry x="110" y="120" width="260" height="270" as="geometry"/>
+                </mxCell>
+                <mxCell id="2" value="临界区&lt;br&gt;共同执行的代码" style="rounded=0;whiteSpace=wrap;html=1;sketch=0;fontColor=#1D3557;strokeColor=#457B9D;fillColor=#A8DADC;" parent="1" vertex="1">
+                    <mxGeometry x="140" y="230" width="200" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="3" value="加R的锁" style="rounded=0;whiteSpace=wrap;html=1;sketch=0;fontColor=#1D3557;strokeColor=#457B9D;fillColor=#A8DADC;" parent="1" vertex="1">
+                    <mxGeometry x="140" y="190" width="200" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="4" value="释放R的锁" style="rounded=0;whiteSpace=wrap;html=1;sketch=0;fontColor=#1D3557;strokeColor=#457B9D;fillColor=#A8DADC;" parent="1" vertex="1">
+                    <mxGeometry x="140" y="350" width="200" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="6" value="创建R的锁" style="rounded=0;whiteSpace=wrap;html=1;sketch=0;fontColor=#1D3557;strokeColor=#457B9D;fillColor=#A8DADC;" vertex="1" parent="1">
+                    <mxGeometry x="140" y="140" width="200" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;startArrow=classic;startFill=1;" edge="1" parent="1" source="8" target="6">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="420" y="310"/>
+                            <mxPoint x="420" y="155"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="11" value="对应" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="10">
+                    <mxGeometry x="0.1833" y="4" relative="1" as="geometry">
+                        <mxPoint as="offset"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="8" value="受保护资源R" style="rounded=0;whiteSpace=wrap;html=1;sketch=0;fontColor=#1D3557;strokeColor=#457B9D;fillColor=#A8DADC;" vertex="1" parent="1">
+                    <mxGeometry x="185" y="300" width="110" height="20" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>

@@ -3,3 +3,23 @@
 [1105/015911.204:INFO:crash_reporting.cc(219)] Crash reporting enabled for process: gpu-process
 [1105/015912.433:INFO:crash_reporting.cc(219)] Crash reporting enabled for process: utility
 [1105/020111.255:INFO:crash_reporting.cc(219)] Crash reporting enabled for process: gpu-process
+[1109/101058.803:ERROR:ssl_client_socket_impl.cc(941)] handshake failed; returned -1, SSL error code 1, net_error -101
+[1109/111924.332:INFO:crash_reporting.cc(219)] Crash reporting enabled for process: utility
+[1109/111924.362:ERROR:audio_manager_base.cc(369)] Invalid audio output parameters received; using fake audio path: format: 0, channel_layout: 0, channels: 0, sample_rate: 0, frames_per_buffer: 0, effects: 0, mic_positions: 
+[1109/111925.585:WARNING:used_ids.h(55)] Duplicate id found. Reassigning from 104 to 127
+[1109/111925.586:WARNING:used_ids.h(55)] Duplicate id found. Reassigning from 106 to 125
+[1109/111925.586:WARNING:used_ids.h(55)] Duplicate id found. Reassigning from 110 to 124
+[1109/111925.586:WARNING:used_ids.h(55)] Duplicate id found. Reassigning from 112 to 123
+[1109/111925.586:WARNING:used_ids.h(55)] Duplicate id found. Reassigning from 103 to 122
+[1109/111925.586:WARNING:used_ids.h(55)] Duplicate id found. Reassigning from 105 to 121
+[1109/111925.586:WARNING:used_ids.h(55)] Duplicate id found. Reassigning from 111 to 120
+[1109/111925.586:WARNING:used_ids.h(55)] Duplicate id found. Reassigning from 113 to 119
+[1109/111925.586:WARNING:used_ids.h(55)] Duplicate id found. Reassigning from 109 to 118
+[1109/111925.586:WARNING:used_ids.h(55)] Duplicate id found. Reassigning from 1 to 14
+[1109/111925.586:WARNING:used_ids.h(55)] Duplicate id found. Reassigning from 3 to 13
+[1109/111925.586:WARNING:used_ids.h(55)] Duplicate id found. Reassigning from 5 to 12
+[1109/111925.586:WARNING:used_ids.h(55)] Duplicate id found. Reassigning from 6 to 11
+[1109/111925.650:ERROR:socket_manager.cc(124)] Failed to resolve address for stun.services.mozilla.com., errorcode: -105
+[1109/111925.651:ERROR:socket_manager.cc(124)] Failed to resolve address for stun.services.mozilla.com., errorcode: -105
+[1109/111925.651:WARNING:stun_port.cc(450)] Port[d78e0b8:0:1:0:local:Net[any:0.0.0.x/0:Wildcard:id=0]]: StunPort: stun host lookup received error -1
+[1109/111925.651:WARNING:stun_port.cc(450)] Port[6d25f60:0:1:0:local:Net[any:0:0:0:x:x:x:x:x/0:Wildcard:id=0]]: StunPort: stun host lookup received error -1

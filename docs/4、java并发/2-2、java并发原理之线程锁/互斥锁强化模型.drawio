@@ -1,0 +1,22 @@
+<mxfile host="65bd71144e">
+    <diagram id="HIB12tsEuMiGJ2RbQobF" name="第 1 页">
+        <mxGraphModel dx="840" dy="683" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" background="#F1FAEE" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="5" value="" style="rounded=0;whiteSpace=wrap;html=1;sketch=0;fontColor=#1D3557;strokeColor=#457B9D;fillColor=none;" vertex="1" parent="1">
+                    <mxGeometry x="120" y="160" width="250" height="230" as="geometry"/>
+                </mxCell>
+                <mxCell id="2" value="临界区&lt;br&gt;共同执行的代码" style="rounded=0;whiteSpace=wrap;html=1;sketch=0;fontColor=#1D3557;strokeColor=#457B9D;fillColor=#A8DADC;" vertex="1" parent="1">
+                    <mxGeometry x="140" y="230" width="200" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="3" value="加锁" style="rounded=0;whiteSpace=wrap;html=1;sketch=0;fontColor=#1D3557;strokeColor=#457B9D;fillColor=#A8DADC;" vertex="1" parent="1">
+                    <mxGeometry x="140" y="190" width="200" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="4" value="释放锁" style="rounded=0;whiteSpace=wrap;html=1;sketch=0;fontColor=#1D3557;strokeColor=#457B9D;fillColor=#A8DADC;" vertex="1" parent="1">
+                    <mxGeometry x="140" y="340" width="200" height="20" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>
