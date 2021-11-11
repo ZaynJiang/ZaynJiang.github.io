@@ -23,3 +23,9 @@
 [1109/111925.651:ERROR:socket_manager.cc(124)] Failed to resolve address for stun.services.mozilla.com., errorcode: -105
 [1109/111925.651:WARNING:stun_port.cc(450)] Port[d78e0b8:0:1:0:local:Net[any:0.0.0.x/0:Wildcard:id=0]]: StunPort: stun host lookup received error -1
 [1109/111925.651:WARNING:stun_port.cc(450)] Port[6d25f60:0:1:0:local:Net[any:0:0:0:x:x:x:x:x/0:Wildcard:id=0]]: StunPort: stun host lookup received error -1
+[1109/172846.148:ERROR:ssl_client_socket_impl.cc(941)] handshake failed; returned -1, SSL error code 1, net_error -101
+[1109/172846.149:ERROR:ssl_client_socket_impl.cc(941)] handshake failed; returned -1, SSL error code 1, net_error -101
+[1109/175933.713:WARNING:angle_platform_impl.cc(45)] compileToBinary(256): 
+C:\fakepath(75,10-46): warning X3571: pow(f, e) will not work for negative f, use abs(f) or conditionally handle negative values if you expect them
+C:\fakepath(98,10-46): warning X3571: pow(f, e) will not work for negative f, use abs(f) or conditionally handle negative values if you expect them
+
