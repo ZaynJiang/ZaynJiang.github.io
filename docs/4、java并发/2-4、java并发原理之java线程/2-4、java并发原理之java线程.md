@@ -7,7 +7,26 @@
 * 有空闲的 CPU 时，操作系统会将其分配给一个处于可运行状态的线程
 * 如果调用一个阻塞的 API，线程的状态就会转换到休眠状态，同时释放 CPU 使用权，休眠状态的线程永远没有机会获得 CPU 使用权，当等待的事件出现了，线程就会从休眠状态转换到可运行状态。
 * 线程执行完或者出现异常就会进入终止状态，线程的生命周期就结束了。
-<br>
+
+#### 1.1.1. 线程与进程的区别？
+进程是操作系统分配资源的最小单位，线程是cpu执行的最小单位  
+![](线程与进程.png)
+
+#### 1.1.2. 守护线程
+当把jvm所有的线程都是守护线程时，jvm会关闭。
+
+#### 1.1.3. java线程常见方法
+* Thread（class方法）  
+  Sleep、currentthread、name、daeam、Thread.yield()、t.join（等待t的线程执行完）
+* Thread对象  
+  wait、wait(xxx)、notify、notifyall、Wait。当前线程变成unrunable，并释放该线程持有这个对象的锁。Notify，通知在这个对象unrunable的一个线程就绪，notifyall是所有的
+
+**注意：notify/notifyAll/wait等方法存在于顶级对象Object中的原因，在使用这3个方法时，必须处于synchronized代码块或者synchronized方法中，否则就会抛出IllegalMonitorStateException异常**
+
+* Callable  
+  实现callable的线程task，可以有返回值，标准的线程是没有返回值的。
+
+
 ### 1.2. java线程状态
 java语言对操作系统的线程进行了进一步的封装，新增了几个状态，一共有：
 * NEW（初始化状态）
@@ -17,7 +36,7 @@ java语言对操作系统的线程进行了进一步的封装，新增了几个�
 * TIMED_WAITING（有时限等待）
 * TERMINATED（终止状态）  
   
-其实上面的阻塞或者等待状态都是属于操作系统的休眠状态（BLOCKED、WAITING、TIMED_WAITING ），只是说java对这几种状态的转换机制做了区分，只要我们理解它们转换状态的机制，就能记住这些状态。
+其实上面的阻塞或者等待状态都是属于操作系统的休眠状态（BLOCKED、WAITING、TIMED_WAITING ），只是说java对这几种状态的转换机制做了区分，只要我们理解它们转换状态的机制，就能记住这些状态。  
 ### 1.3. java线程的流转  
 #### 1.3.1. new->runnable  
 java刚创建出来的 Thread 对象就是 NEW 状态，java创建线程有两种方法。一种是继承thread，另一种是实现runaable接口，此时但操作系统还没有感知到，需要调用线程对象的start的方法。然后就转变为RUNNABLE。
