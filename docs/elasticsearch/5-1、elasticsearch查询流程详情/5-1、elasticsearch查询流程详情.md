@@ -16,5 +16,88 @@
 
 ### 2.3 整体流程
 
-### 2.2 GET的详细流程
+### 2.2. GET流程
 参考文档：https://zhuanlan.zhihu.com/p/34674517
+
+在协调节点有个http_server_worker线程池。收到读请求后它的具体过程为：  
+* 收到请求，先获取集群的状态信息
+* 根据路由信息计算id是在哪一个分片上
+* 因为一个分片可能有多个副本分片，所以上述的计算结果是一个列表
+* 调用transportServer的sendRequest方法向目标发送请求
+* 上一步的方法内部会检查是否为本地node，如果是的话就不会发送到网络，否则会异步发送
+* 等待数据节点回复，如果成功则返回数据给客户端，否则会重试
+* 重试会发送上述列表的下一个。  
+
+
+在数据节点有个shardTransporthander的messageReceived的入口专门接收协调节点发送的请求。  
+```
+    private class ShardTransportHandler implements TransportRequestHandler<Request> {
+
+        @Override
+        public void messageReceived(final Request request, final TransportChannel channel, Task task) throws Exception {
+            if (logger.isTraceEnabled()) {
+                logger.trace("executing [{}] on shard [{}]", request, request.internalShardId);
+            }
+            asyncShardOperation(request, request.internalShardId, new ChannelActionListener<>(channel, transportShardAction, request));
+        }
+    }
+```
+最终会调用org.elasticsearch.index.get.ShardGetService#innerGet的方法
+```
+    private GetResult innerGet(String type, String id, String[] gFields, boolean realtime, long version, VersionType versionType,
+                               long ifSeqNo, long ifPrimaryTerm, FetchSourceContext fetchSourceContext) {
+        fetchSourceContext = normalizeFetchSourceContent(fetchSourceContext, gFields);
+        if (type == null || type.equals("_all")) {
+            DocumentMapper mapper = mapperService.documentMapper();
+            type = mapper == null ? null : mapper.type();
+        }
+
+        Engine.GetResult get = null;
+        if (type != null) {
+            Term uidTerm = new Term(IdFieldMapper.NAME, Uid.encodeId(id));
+            get = indexShard.get(new Engine.Get(realtime, realtime, type, id, uidTerm)
+                .version(version).versionType(versionType).setIfSeqNo(ifSeqNo).setIfPrimaryTerm(ifPrimaryTerm));
+            assert get.isFromTranslog() == false || realtime : "should only read from translog if realtime enabled";
+            if (get.exists() == false) {
+                get.close();
+            }
+        }
+
+        if (get == null || get.exists() == false) {
+            return new GetResult(shardId.getIndexName(), type, id, UNASSIGNED_SEQ_NO, UNASSIGNED_PRIMARY_TERM, -1, false, null, null, null);
+        }
+
+        try {
+            // break between having loaded it from translog (so we only have _source), and having a document to load
+            return innerGetLoadFromStoredFields(type, id, gFields, fetchSourceContext, get, mapperService);
+        } finally {
+            get.close();
+        }
+    }
+```
+InternalEngine#get过程会加读锁。处理realtime选项，如果为true，则先判断是否有数据可以刷盘，然后调用Searcher进行读取。Searcher是对IndexSearcher的封装。
+
+从ES 5.x开始不会从translog中读取，只从Lucene中读。realtime的实现机制变成依靠refresh实现
+
+参考文章：https://jiankunking.com/elasticsearch-get-source-code-analysis.html
+https://www.cnblogs.com/wangnanhui/articles/13273764.html
+它其中的流程主要是：
+* shardOperation先检查是否需要refresh，然后调用indexShard.getService().get()读取数据并存储到GetResult中。读取及过滤 在ShardGetService#get()
+* GetResult getResult = innerGet(……)；
+获取结果。GetResult类用于存储读取的真实数据内容。核心的数据读取实现在ShardGetService#innerGet
+
+InternalEngine#get过程会加读锁。处理realtime选项，如果为true，则先判断是否有数据可以刷盘，然后调用Searcher进行读取。Searcher是对IndexSearcher的封装  
+从ES 5.x开始不会从translog中读取，只从Lucene中读。realtime的实现机制变成依靠refresh实现。参考官方链接  
+
+
+GET是根据Document _id 哈希找到对应的shard的。
+根据Document _id查询的实时可见是通过依靠refresh实现的。  
+
+
+
+
+### 2.3. search流程  
+对于Search类请求，查询的时候是一起查询内存和磁盘上的Segment，最后将结果合并后返回。这种查询是近实时（Near Real Time）的，主要是由于内存中的Index数据需要一段时间后才会刷新为Segment。  
+所有的搜索系统一般都是两阶段查询，第一阶段查询到匹配的DocID，第二阶段再查询DocID对应的完整文档，这种在Elasticsearch中称为query_then_fetch，还有一种是一阶段查询的时候就返回完整Doc，在Elasticsearch中称作query_and_fetch，一般第二种适用于只需要查询一个Shard的请求。  
+除了一阶段，两阶段外，还有一种三阶段查询的情况。搜索里面有一种算分逻辑是根据TF（Term Frequency）和DF（Document Frequency）计算基础分，但是Elasticsearch中查询的时候，是在每个Shard中独立查询的，每个Shard中的TF和DF也是独立的，虽然在写入的时候通过_routing保证Doc分布均匀，但是没法保证TF和DF均匀，那么就有会导致局部的TF和DF不准的情况出现，这个时候基于TF、DF的算分就不准。为了解决这个问题，Elasticsearch中引入了DFS查询，比如DFS_query_then_fetch，会先收集所有Shard中的TF和DF值，然后将这些值带入请求中，再次执行query_then_fetch，这样算分的时候TF和DF就是准确的，类似的有DFS_query_and_fetch。这种查询的优势是算分更加精准，但是效率会变差。另一种选择是用BM25代替TF/DF模型。
+在新版本Elasticsearch中，用户没法指定DFS_query_and_fetch和query_and_fetch，这两种只能被Elasticsearch系统改写。
