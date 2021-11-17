@@ -1,0 +1,59 @@
+<mxfile host="65bd71144e">
+    <diagram id="76IJmK22PKAlifaZ4FJC" name="第 1 页">
+        <mxGraphModel dx="896" dy="656" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" background="#F1FAEE" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="2" value="" style="rounded=0;whiteSpace=wrap;html=1;sketch=0;fontColor=#1D3557;strokeColor=#457B9D;fillColor=#A8DADC;" vertex="1" parent="1">
+                    <mxGeometry x="170" y="240" width="180" height="310" as="geometry"/>
+                </mxCell>
+                <mxCell id="3" value="主机房" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fontColor=#1D3557;" vertex="1" parent="1">
+                    <mxGeometry x="240" y="190" width="50" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="4" value="备用机房" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fontColor=#1D3557;" vertex="1" parent="1">
+                    <mxGeometry x="448" y="190" width="60" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="5" value="" style="rounded=0;whiteSpace=wrap;html=1;sketch=0;fontColor=#1D3557;strokeColor=#457B9D;fillColor=#A8DADC;" vertex="1" parent="1">
+                    <mxGeometry x="390" y="240" width="176" height="310" as="geometry"/>
+                </mxCell>
+                <mxCell id="6" value="mysql备机" style="aspect=fixed;perimeter=ellipsePerimeter;html=1;align=center;shadow=0;dashed=0;spacingTop=3;image;image=img/lib/active_directory/generic_server.svg;rounded=0;sketch=0;fontColor=#1D3557;strokeColor=#457B9D;fillColor=#A8DADC;labelBackgroundColor=none;" vertex="1" parent="1">
+                    <mxGeometry x="464" y="460" width="28.000000000000004" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="11" value="mysql备机" style="aspect=fixed;perimeter=ellipsePerimeter;html=1;align=center;shadow=0;dashed=0;spacingTop=3;image;image=img/lib/active_directory/generic_server.svg;rounded=0;sketch=0;fontColor=#1D3557;strokeColor=#457B9D;fillColor=#A8DADC;labelBackgroundColor=none;" vertex="1" parent="1">
+                    <mxGeometry x="180" y="470" width="28.000000000000004" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="14" style="edgeStyle=orthogonalEdgeStyle;curved=0;rounded=1;sketch=0;orthogonalLoop=1;jettySize=auto;html=1;fontColor=#1D3557;strokeColor=#457B9D;fillColor=#A8DADC;" edge="1" parent="1" source="13" target="11">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="194" y="470"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="15" style="edgeStyle=orthogonalEdgeStyle;curved=0;rounded=1;sketch=0;orthogonalLoop=1;jettySize=auto;html=1;fontColor=#1D3557;strokeColor=#457B9D;fillColor=#A8DADC;" edge="1" parent="1" source="13" target="6">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="13" value="主mysql" style="aspect=fixed;perimeter=ellipsePerimeter;html=1;align=center;shadow=0;dashed=0;spacingTop=3;image;image=img/lib/active_directory/generic_server.svg;rounded=0;sketch=0;fontColor=#1D3557;strokeColor=#457B9D;fillColor=#A8DADC;labelBackgroundColor=none;" vertex="1" parent="1">
+                    <mxGeometry x="251" y="460" width="28.000000000000004" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="19" style="edgeStyle=orthogonalEdgeStyle;curved=0;rounded=1;sketch=0;orthogonalLoop=1;jettySize=auto;html=1;fontColor=#1D3557;strokeColor=#457B9D;fillColor=#A8DADC;" edge="1" parent="1" source="16" target="13">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="16" value="web服务器" style="aspect=fixed;perimeter=ellipsePerimeter;html=1;align=center;shadow=0;dashed=0;spacingTop=3;image;image=img/lib/active_directory/generic_server.svg;rounded=0;sketch=0;fontColor=#1D3557;strokeColor=#457B9D;fillColor=#A8DADC;labelBackgroundColor=none;" vertex="1" parent="1">
+                    <mxGeometry x="251" y="340" width="28.000000000000004" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="18" style="edgeStyle=orthogonalEdgeStyle;curved=0;rounded=1;sketch=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.25;entryY=0;entryDx=0;entryDy=0;fontColor=#1D3557;strokeColor=#457B9D;fillColor=#A8DADC;" edge="1" parent="1" source="17" target="16">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="17" value="nginx" style="aspect=fixed;perimeter=ellipsePerimeter;html=1;align=center;shadow=0;dashed=0;spacingTop=3;image;image=img/lib/active_directory/generic_server.svg;rounded=0;sketch=0;fontColor=#1D3557;strokeColor=#457B9D;fillColor=#A8DADC;labelBackgroundColor=none;" vertex="1" parent="1">
+                    <mxGeometry x="246" y="250" width="28.000000000000004" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="20" value="异步同步" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fontColor=#1D3557;" vertex="1" parent="1">
+                    <mxGeometry x="340" y="460" width="60" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="21" value="异步同步" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fontColor=#1D3557;" vertex="1" parent="1">
+                    <mxGeometry x="170" y="450" width="60" height="20" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>
