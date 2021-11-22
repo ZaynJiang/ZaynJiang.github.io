@@ -119,12 +119,152 @@ void checkAll(){
 
 
 ## 3. CompletableFuture  
-这个和拉姆达表达式很紧密，可以组合多种不同的功能。这里只是简单的阐述一下它大知的一些功能。
-1）竞争
-CompletableFuture.supplyAsync(()->{}）.applyToEither.(CompletableFuture.supplyAsync(()->{}),,(s)->{return s;}).join();
+当我们并行处理两个业务方法时，如前面所示，可以采用
+```
+new Thread(()->doBizA())
+  .start();
+new Thread(()->doBizB())
+  .start();  
+```  
+但是java在1.8版本提供了 CompletableFuture 这个类，大大提升了java并发编程的能力。  
+
 选取一个执行结果返回，竞争获胜的返回。
-2）异常，捕获线程的异常
+
+### 3.1. 创建CompletableFuture对象
+```
+static CompletableFuture<Void> runAsync(Runnable runnable)
+static <U> CompletableFuture<U> supplyAsync(Supplier<U> supplier)
+// 可以指定线程池  
+static CompletableFuture<Void> runAsync(Runnable runnable, Executor executor)
+static <U> CompletableFuture<U> supplyAsync(Supplier<U> supplier, Executor executor)  
+```  
+如上是创建CompletableFuture对象的四个方法 ,runAsync没有返回值，supplyAsync有返回值
+
+
+### 3.2. 主要方法
+这个和拉姆达表达式很紧密，可以组合多种不同的功能。这里只是简单的阐述一下它大知的一些功能。
+* 竞争（supplyAsync有返回值、runAsync没有返回值）
+  CompletableFuture.supplyAsync(()->{}）.applyToEither.(CompletableFuture.supplyAsync(()->{}),,(s)->{return s;}).join();
+* 异常，捕获线程的异常
  CompletableFuture.supplyAsync(()->{ throw new RuntimeException("exception test!")}).exceptionally(e->{System.out.println(e.getMessage());return "Hello world!";}).join();
-3）组合，将两个线程的结果组合thenCombine
-4）接收，thenAccept
-5）变换，thenApplyAsync
+* 组合，将两个线程的结果组合thenCombine
+* 接收，thenAccept
+* 变换，thenApplyAsync  
+
+### 3.4. 功能分类  
+CompletableFuture 类还实现了 CompletionStage 接口，这个接口的功能很多，我们对这些功能分为：串行关系、并行关系、汇聚关系（and和or）；
+* 串行关系
+  * thenApply，支持参数返回值
+  * thenAccept，支持参数不支持返回值
+  * thenRun，不持支持参数也不支持返回值
+  * thenCompose，会新创建出一个子流程，最终结果和 thenApply 系列是相同的
+  
+  ```
+    CompletableFuture<String> f0 = 
+    CompletableFuture.supplyAsync(
+      () -> "Hello World")      //①
+    .thenApply(s -> s + " QQ")  //②
+    .thenApply(String::toUpperCase);//③
+    System.out.println(f0.join());
+    // 输出结果
+    HELLO WORLD QQ
+  ```
+  如上图代码所示：虽然这是一个异步流程，①②③却是串行执行的，②依赖①的执行结果，③依赖②的执行结果
+
+* 汇聚关系 
+  * AND 汇聚关系
+    * thenCombine
+    * thenAcceptBoth
+    * runAfterBoth
+  * OR 汇聚关系, 表示任意的任务日完就会往下走
+    * applyToEither
+    * acceptEither
+    * runAfterEither
+    ```
+      CompletableFuture<String> f1 = 
+      CompletableFuture.supplyAsync(()->{
+        int t = getRandom(5, 10);
+        sleep(t, TimeUnit.SECONDS);
+        return String.valueOf(t);
+    });
+    
+    CompletableFuture<String> f2 = 
+      CompletableFuture.supplyAsync(()->{
+        int t = getRandom(5, 10);
+        sleep(t, TimeUnit.SECONDS);
+        return String.valueOf(t);
+    });
+    
+    CompletableFuture<String> f3 = 
+      f1.applyToEither(f2,s -> s);
+    
+    System.out.println(f3.join());
+
+  ```
+* 异常处理
+fn、consumer、action如果抛出了异常，我们可以采用CompletableFuture的链式编程来处理异常。
+```
+CompletableFuture<Integer> 
+  f0 = CompletableFuture
+    .supplyAsync(()->7/0))
+    .thenApply(r->r*10)
+    .exceptionally(e->0);
+System.out.println(f0.join());
+
+```
+
+我这里利用completablefuture来实现一个烧水泡茶的的多线程  
+![](烧水泡茶多线程.png)    
+代码示例：
+```
+// 任务 1：洗水壶 -> 烧开水
+CompletableFuture<Void> f1 = 
+  CompletableFuture.runAsync(()->{
+  System.out.println("T1: 洗水壶...");
+  sleep(1, TimeUnit.SECONDS);
+ 
+  System.out.println("T1: 烧开水...");
+  sleep(15, TimeUnit.SECONDS);
+});
+// 任务 2：洗茶壶 -> 洗茶杯 -> 拿茶叶
+CompletableFuture<String> f2 = 
+  CompletableFuture.supplyAsync(()->{
+  System.out.println("T2: 洗茶壶...");
+  sleep(1, TimeUnit.SECONDS);
+ 
+  System.out.println("T2: 洗茶杯...");
+  sleep(2, TimeUnit.SECONDS);
+ 
+  System.out.println("T2: 拿茶叶...");
+  sleep(1, TimeUnit.SECONDS);
+  return " 龙井 ";
+});
+// 任务 3：任务 1 和任务 2 完成后执行：泡茶
+CompletableFuture<String> f3 = 
+  f1.thenCombine(f2, (__, tf)->{
+    System.out.println("T1: 拿到茶叶:" + tf);
+    System.out.println("T1: 泡茶...");
+    return " 上茶:" + tf;
+  });
+// 等待任务 3 执行结果
+System.out.println(f3.join());
+ 
+void sleep(int t, TimeUnit u) {
+  try {
+    u.sleep(t);
+  }catch(InterruptedException e){}
+}
+// 一次执行结果：
+T1: 洗水壶...
+T2: 洗茶壶...
+T1: 烧开水...
+T2: 洗茶杯...
+T2: 拿茶叶...
+T1: 拿到茶叶: 龙井
+T1: 泡茶...
+上茶: 龙井
+```
+
+**注意：在实际的工程代码使用CompletableFuture读取数据库的异步操作，需要放到线程池中，避免线程饥饿，并且注意处理异常。**
+
+### 3.5. 小结
