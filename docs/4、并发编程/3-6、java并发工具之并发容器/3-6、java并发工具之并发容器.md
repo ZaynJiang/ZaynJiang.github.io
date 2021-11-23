@@ -168,7 +168,59 @@ public class SafeWM {
 ### 2.4. 小结  
 无锁方案相对于互斥锁方案，优点非常多，首先性能好，其次是基本不会出现死锁问题（但可能出现饥饿和活锁问题，因为自旋会反复重试）。Java 提供的原子类大部分都实现了 compareAndSet() 方法，基于 compareAndSet() 方法，你可以构建自己的无锁数据结构
 
-## 3.AQS原理
+## 3. 并发容器  
+前面介绍了一些并发原子类的使用和基本原理，在java中还有一类常见的工具，容器， List、Map、Set、Queue，并不是所有的 Java 容器都是线程安全。我们常用的ArrayList, HashMap等都是非线程安全的，在jdk1.5之前也提供了同步容器，Vector、Stack 、Hashtable，但所有方法都用 synchronized 来保证互斥，串行度太高了。因此 Java 在 1.5 及之后版本提供了性能更高的容器，我们一般称为并发容器,涵盖了四大类型的容器。
+### 3.1. 并发容器分类
+![](并发容器分类.png)    
+
+### 3.2. list并发容器
+CopyOnWriteArrayList，写的时候会将共享变量新复制一份出来，这样做的好处是读操作完全无锁  
+![](copyonwritearraylist.png)  
+使用注意事项：  
+* 适用于写操作非常少的场景，而且能够容忍读写的短暂不一致。
+* CopyOnWriteArrayList写操作是互斥的
+* CopyOnWriteArrayList 迭代器是只读的，不支持增删改。因为迭代器遍历的仅仅是一个快照，而对快照进行增删改是没有意义的
+
+### 3.3. Map并发容器
+* ConcurrentHashMap，无序的，key不允许为空  
+**注意：Java7中的HashMap在执行put操作时会涉及到扩容，由于扩容时链表并发操作会造成链表成环，所以可能导致cpu飙升100%。需要使用ConcurrentHashMap代替**
+* ConcurrentSkipListMap，有序的，key不允许为空，基于跳表，跳表插入、删除、查询操作平均的时间复杂度是 O(log n)
+
+### 3.4. set并发容器
+* CopyOnWriteArraySet，和list的类似
+* ConcurrentSkipListSet，和map的类似
+
+### 3.5. queue并发容器
+queue容器本身就比较复杂，且多。对于并发的queue，我们这里先来对其分类，可以按照2个维度分类  
+阻塞和非阻塞分：  
+* 阻塞  
+  当队列已满时，入队操作阻塞；当队列已空时，出队操作阻塞
+* 非阻塞
+  不会阻塞  
+
+出入队列的方式来分：  
+* 单端  
+  只能队尾入队，队首出队
+* 双端  
+  双端指的是队首队尾皆可入队出队  
+
+按照以上的分类我们可以对其进行组合起来分类  
+* 单端阻塞队列  
+   ArrayBlockingQueue、LinkedBlockingQueue、SynchronousQueue、LinkedTransferQueue、PriorityBlockingQueue、DelayQueue  
+   内部一般会持有一个队列或者链表  
+   ![](单端阻塞队列.png)
+* 双端阻塞队列  
+  LinkedBlockingDeque  
+  ![](双端阻塞队列.png)
+* 单端非阻塞队列  
+  ConcurrentLinkedQueue
+* 双端非阻塞队列  
+  ConcurrentLinkedDeque  
+
+注意：实际生产中建议使用有界队列，但只有 ArrayBlockingQueue 和 LinkedBlockingQueue 是支持有界的，
+
+
+## 3. AQS原理
 AbstractQueuedSynchronizer，简称AQS，顾名思义抽象的队列式的同步器，ReentrantLock、Semaphore、CountDownLatch等底层的实现都是依靠这个AQS，而AQS中也大量使用了CAS机制。AQS实现主要用到了这个三个原理：
 
 
