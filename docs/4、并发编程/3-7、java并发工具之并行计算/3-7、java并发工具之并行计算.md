@@ -185,3 +185,18 @@ static class MR extends RecursiveTask<Map<String, Long>> {
 ## 4. 总结  
 使用fork-join有点像使用归并排序，执行下一层的时候，可以fork下，归并的时候join下。  
 **注意：Java 1.8 提供的 Stream API 里面并行流也是以 ForkJoinPool 为基础的。不过需要你注意的是，默认情况下所有的并行流计算都共享一个 ForkJoinPool，这个共享的 ForkJoinPool 默认的线程数是 CPU 的核数；如果所有的并行流计算都是 CPU 密集型计算的话，完全没有问题，但是如果存在 I/O 密集型的并行流计算，那么很可能会因为一个很慢的 I/O 计算而拖慢整个系统的性能。所以建议用不同的 ForkJoinPool 执行不同类型的计算任务**  
+如下的代码例子：
+```
+// 采购订单
+PurchersOrder po;
+CompletableFuture<Boolean> cf = 
+  CompletableFuture.supplyAsync(()->{
+    // 在数据库中查询规则
+    return findRuleByJdbc();
+  }).thenApply(r -> {
+    // 规则校验
+    return check(po, r);
+});
+Boolean isOk = cf.join();
+```
+&emsp;&emsp;findRuleByJdbc() 这个方法隐藏着一个阻塞式 I/O，这意味着会阻塞调用线程。默认情况下所有的 CompletableFuture 共享一个 ForkJoinPool，当有阻塞式 I/O 时，可能导致所有的 ForkJoinPool 线程都阻塞，进而影响整个系统的性能
