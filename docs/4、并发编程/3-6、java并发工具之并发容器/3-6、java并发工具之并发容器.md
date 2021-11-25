@@ -169,21 +169,67 @@ public class SafeWM {
 无锁方案相对于互斥锁方案，优点非常多，首先性能好，其次是基本不会出现死锁问题（但可能出现饥饿和活锁问题，因为自旋会反复重试）。Java 提供的原子类大部分都实现了 compareAndSet() 方法，基于 compareAndSet() 方法，你可以构建自己的无锁数据结构
 
 ## 3. 并发容器  
-前面介绍了一些并发原子类的使用和基本原理，在java中还有一类常见的工具，容器， List、Map、Set、Queue，并不是所有的 Java 容器都是线程安全。我们常用的ArrayList, HashMap等都是非线程安全的，在jdk1.5之前也提供了同步容器，Vector、Stack 、Hashtable，但所有方法都用 synchronized 来保证互斥，串行度太高了。因此 Java 在 1.5 及之后版本提供了性能更高的容器，我们一般称为并发容器,涵盖了四大类型的容器。
+&emsp;&emsp;前面介绍了一些并发原子类的使用和基本原理，在java中还有一类常见的工具，容器， List、Map、Set、Queue，并不是所有的 Java 容器都是线程安全。我们常用的ArrayList, HashMap等都是非线程安全的，在jdk1.5之前也提供了同步容器，Vector、Stack 、Hashtable，但所有方法都用 synchronized 来保证互斥，串行度太高了。因此 Java 在 1.5 及之后版本提供了性能更高的容器，我们一般称为并发容器,涵盖了四大类型的容器。
 ### 3.1. 并发容器分类
-![](并发容器分类.png)    
-
+![](并发容器分类.png)  
+![](并发容器分类1.png)  
+![](map容器关系.png)
 ### 3.2. list并发容器
-CopyOnWriteArrayList，写的时候会将共享变量新复制一份出来，这样做的好处是读操作完全无锁  
-![](copyonwritearraylist.png)  
+&emsp;&emsp;ArrayList基于数组，通过index访问，扩容成本高，查找快，默认10，扩容乘以1.5
+有并发安全问题。遍历的时候，如果size变化了，会产生ConcurrentModificationException
+。    
+&emsp;&emsp;LinkedList，基于链表，无需扩容，查找慢，有并发安全问题。遍历的时候，如果size变化了，会产生ConcurrentModificationException 。同时也对一些方法做了限制：  
+* Collections.synchronizedList，强制将 List 的操作加上同步
+* Arrays.asList，不允许添加删除，但是可以 set 替换元素
+* Collections.unmodifiableList，不允许修改内容，包括添加删除和 set  
+
+&emsp;&emsp;jdk提供了CopyOnWriteArrayList的并发容器，写的时候会将共享变量新复制一份出来，这样做的好处是读操作完全无锁  
+![](copyonwritearraylist.png)    
+![](CopyOnWriteArrayListd代码.png)  
 使用注意事项：  
 * 适用于写操作非常少的场景，而且能够容忍读写的短暂不一致。
 * CopyOnWriteArrayList写操作是互斥的
-* CopyOnWriteArrayList 迭代器是只读的，不支持增删改。因为迭代器遍历的仅仅是一个快照，而对快照进行增删改是没有意义的
+* CopyOnWriteArrayList 迭代器是只读的，不支持增删改。因为迭代器遍历的仅仅是一个快照，而对快照进行增删改是没有意义的  
 
 ### 3.3. Map并发容器
+
+#### 3.3.1. hashMap
+hashmap是线程不安全的，这里可以看下hashmap的原理：  
+![](hashmap原理.png)    
+&emsp;&emsp;hashmap会根据key计算hash值存入对应的数组里，如果出现hash冲突，当会以单链表的方式扩展存储。当没有hash冲突的时候，查询效率为o(1),但是当有hash冲突后，需要遍历链表，查询效率会变成o(n)，在jdk8以前，冲突后使用单链表扩展，但是可能会导致链表非常深，jdk8后采用红黑树加以优化（长度超过8会转化为红黑树）了，查找效率变为o(logN)了。并且jdk数组的长度为2的倍数，以便cpu高效进行模运算。  
+&emsp;&emsp;在hashmap新建的时候会指定容量（默认16），当超过负载因子（0.75）后，会进行扩容2倍。扩容的时候，从原来的链表取出元素，然后计算下表，放入到新链表中，放入新元素的从链表头插入元素的。  
+&emsp;&emsp;Jdk7的这个方式多线程会在rehash的时候产生死循环。  
+&emsp;&emsp;具体过程如下：
+* 原链表A->B->null
+* 两个线程同时开始扩容，开始复制A、B
+* 线程1拿到A后，cpu切换
+* 线程2拿到A后，插入新链表第一位置
+* 线程2拿到B后，插入新链表第一位置，并指向A
+* 新链表结构变为,B->A->null
+* 线程1操作，从链表取出B，将A执行B，数组指向设置为A结束
+* 形成了循环指向了
+      
+![](hashmap扩容.png)  
+&emsp;&emsp;Hashmap的特点：  
+* 将容量设计为2的n次方，数学上证明可以减少冲突的概率，第二可以取模运行更高效。
+* Java8引入红黑树，当链表大于8后变为树结构，从而提高性能。
+* Java8优化了高位运算（定位数组索引需要：hash、高位运算、取模），通过hash值的高16位异或低16位在length太大和或太小性能的开销比较平衡。
+* Java8在扩容的时候不需要重新计算hash，会通过位运算比较来知道新的hash，并且扩容的时候，不会像8一样，链表倒置。
+* Keys扩容后是无序的，慎用多个key组成的字符串
+* 多线程写会冲突，可能会导致数据丢失。因为同一hash时，插入链表头可能被覆盖
+  
+
+&emsp;&emsp;LinkedHashMap继承了hashmap，即拥有hashmap的功能，并维护了一个双向链表，来保证顺序
+包括插入顺序和访问顺序，同样的和hashmap有线程安全问题
+
+#### 3.3.1. 并发Map    
+正因为hashmap不安全，jdk提供了并发容器。    
+&emsp;&emsp;如果让hashmap变成线程安全，我们可以直接加上锁，它就变成线程安全了，hashtable就是这样的。但是性能就非常差，我们想到可以将锁的粒度减小不就可以了，于是java7的分段锁的hashmap就诞生了  
+&emsp;&emsp;ConcurrentHashMap默认16个Segment，降低锁粒度。Segment数组又包含了hashmap的entry数组。获取size比较麻烦，需要各个段聚合，会计算3次是否发生变化，变化了再锁住重新算。  
+&emsp;&emsp;Java 8为进一步提高并发性，摒弃了分段锁的方案，而是直接使用一个大的数组。通过cas、volatile、synchronized保持并发安全性，通过维护的size字段来提供获取map的大小。
 * ConcurrentHashMap，无序的，key不允许为空  
-**注意：Java7中的HashMap在执行put操作时会涉及到扩容，由于扩容时链表并发操作会造成链表成环，所以可能导致cpu飙升100%。需要使用ConcurrentHashMap代替**
+**注意：Java7中的HashMap在执行put操作时会涉及到扩容，由于扩容时链表并发操作会造成链表成环，所以可能导致cpu飙升100%。需要使用ConcurrentHashMap代替**    
+![](currenthashmap结构.png)  
 * ConcurrentSkipListMap，有序的，key不允许为空，基于跳表，跳表插入、删除、查询操作平均的时间复杂度是 O(log n)
 
 ### 3.4. set并发容器
@@ -225,9 +271,17 @@ AbstractQueuedSynchronizer，简称AQS，顾名思义抽象的队列式的同步
 
 
 以java的重入公平锁(ReentrantLock)为例
- 1) acquire
- ![](aqs原理.png)
-以上代码总结下来，会判断当前锁状态是不是可用的，可用会判断是不是有线程在队列中，如果不在队列中说明可以拿到锁。如果锁不可用，则判断是不是自己的，因为是可重入，是自己的就获取成功了。当然设置锁属性的时候使用CAS技术。
+ 1) acquire  
+   ![](aqs原理.png)  
+   以上代码总结下来，会判断当前锁状态是不是可用的，可用会判断是不是有线程在队列中，如果不在队列中说明可以拿到锁。如果锁不可用，则判断是不是自己的，因为是可重入，是自己的就获取成功了。当然设置锁属性的时候使用CAS技术。
  1) addWaiter
 
 尾分叉
+
+
+## 4. ThreadLocal  
+特点
+* 线程本地变量
+* 每个线程一个副本
+* 隐式传参
+* 及时清理
