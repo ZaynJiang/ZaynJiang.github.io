@@ -229,4 +229,4 @@ public class RouterTable {
 ### 3.3. 小结  
  Copy-on-Write和不可变联系紧密， String、Integer、Long 等都是基于 Copy-on-Write 方案实现的。它也有缺点的，那就是消耗内存，每次修改都需要复制一个新的对象出来。不过现在gc技术不断成熟，这一点的影响慢慢在减小。
 
- **PS：为什么没有CopyOnWriteLinkedList呢？那是因为CopyOnWriteLinkedList的链表结构读取效率比较低，就违背了读多写少的设计初衷**
+ **PS：为什么没有CopyOnWriteLinkedList呢？那是因为CopyOnWriteLinkedList的链表结构读取效率比较低，就违背了读多写少的设计初衷，而且链表的新增删除压根就不需要复制，性能损耗也不大，所以没有必要**
