@@ -229,4 +229,84 @@ public class RouterTable {
 ### 3.3. 小结  
  Copy-on-Write和不可变联系紧密， String、Integer、Long 等都是基于 Copy-on-Write 方案实现的。它也有缺点的，那就是消耗内存，每次修改都需要复制一个新的对象出来。不过现在gc技术不断成熟，这一点的影响慢慢在减小。
 
- **PS：为什么没有CopyOnWriteLinkedList呢？那是因为CopyOnWriteLinkedList的链表结构读取效率比较低，就违背了读多写少的设计初衷，而且链表的新增删除压根就不需要复制，性能损耗也不大，所以没有必要**
+ **PS：为什么没有CopyOnWriteLinkedList呢？那是因为CopyOnWriteLinkedList的链表结构读取效率比较低，就违背了读多写少的设计初衷，而且链表的新增删除压根就不需要复制，性能损耗也不大，所以没有必要**  
+
+
+## 4. ThreadLocal  
+ &emsp;&emsp;多个线程同时读写同一共享变量存在并发问题，因此没有共享，就没有问题了。Java 语言提供的线程本地存储（ThreadLocal）就能够做到不同线程之间就没有干扰了。  
+ 例如我们使用threadlocal实现线程安全的date处理
+ ```
+ static class SafeDateFormat {
+  // 定义 ThreadLocal 变量
+  static final ThreadLocal<DateFormat> tl=ThreadLocal.withInitial(()-> new SimpleDateFormat("yyyy-MM-dd HH:mm:ss"));
+      
+  static DateFormat get(){
+    return tl.get();
+  }
+}
+// 不同线程执行下面代码
+// 返回的 df 是不同的
+DateFormat df = SafeDateFormat.get()；
+ ```
+在java中，一般是采用 ThreadLocal 来传递一些上下文信息，例如 Spring 使用 ThreadLocal 来传递事务信息，注意在异步场景中，不可以使用 Spring 的事务管理器，因为ThreadLocal内的变量是线程级别的，而异步编程意味着线程不同，不同线程的变量不可以共享。
+### 4.1. threadlocal原理 
+&emsp;&emsp;ThreadLocal 的目标是让不同的线程有不同的变量 V，那最直接的方法就是创建一个 Map，它的 Key 是线程，Value 是每个线程拥有的变量 V，ThreadLocal 内部持有这样的一个 Map 就可以了。  
+![](threadlocal示意图.png)  
+* thread私有变量threadlocalMap
+* threadlocalmap存储，threadlocal:value    
+
+示例代码如下： 
+```
+class Thread {
+  // 内部持有 ThreadLocalMap
+  ThreadLocal.ThreadLocalMap threadLocals;
+}
+class ThreadLocal<T>{
+  public T get() {
+    // 首先获取线程持有的
+    //ThreadLocalMap
+    ThreadLocalMap map = Thread.currentThread().threadLocals;
+    // 在 ThreadLocalMap 中
+    // 查找变量
+    Entry e = map.getEntry(this);
+    return e.value;  
+  }
+  static class ThreadLocalMap{
+    // 内部是数组而不是 Map
+    Entry[] table;
+    // 根据 ThreadLocal 查找 Entry
+    Entry getEntry(ThreadLocal key){
+      // 省略查找逻辑
+    }
+    //Entry 定义
+    static class Entry extends
+    WeakReference<ThreadLocal>{
+      Object value;
+    }
+  }
+}
+```
+**注意：这里的map的持有方是属于thread，而不是threadlocal,这里和我们直觉不太一样，ThreadLocal 仅仅是一个代理工具类，内部并不持有任何与线程相关的数据，所有和线程相关的数据都存储在 Thread 里面，为什么会这样呢？**   
+&emsp;&emsp;因为这样设计不容易产生内存泄露， 因为Java 的实现中 Thread 持有 ThreadLocalMap，对 ThreadLocal 的引用还是弱引用（WeakReference），只要 Thread 对象可以被回收，那么 ThreadLocalMap 就能被回收。Java 的这种实现方案虽然看上去复杂一些，但是更加安全  
+
+### 4.2. ThreadLocal与线程池  
+&emsp;&emsp;我们在线程池中使用 ThreadLocal就可能导致内存泄露，因为线程池中线程的存活时间太长，往往都是和程序同生共死的，这就意味着 Thread 持有的 ThreadLocalMap 一直都不会被回收  
+&emsp;&emsp;所以在线程池使用需要特别注意，需要手动释放。可以参考：
+```
+ExecutorService es;
+ThreadLocal tl;
+es.execute(()->{
+  //ThreadLocal 增加变量
+  tl.set(obj);
+  try {
+    // 省略业务逻辑代码
+  }finally {
+    // 手动清理 ThreadLocal 
+    tl.remove();
+  }
+});
+```
+
+### 4.3. InheritableThreadLocal   
+如果你需要子线程继承父线程的线程变量，Java 提供了 InheritableThreadLocal 来支持这种特性，用法和ThreadLocal类似，但是同样不建议在线程池中使用 InheritableThreadLocal，因为同样可能导致内存泄漏，而且线程池的线程是动态的，继承关系混乱。
+
