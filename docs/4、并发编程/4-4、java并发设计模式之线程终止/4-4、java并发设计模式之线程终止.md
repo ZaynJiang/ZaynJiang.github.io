@@ -70,6 +70,47 @@ class Proxy {
 * shutdownNow()  
   激进关闭线程池的方法，线程池执行 shutdownNow() 后，会拒绝接收新的任务，同时还会中断线程池中正在执行的任务，已经进入阻塞队列的任务也被剥夺了执行的机会，不过这些被剥夺执行机会的任务会作为 shutdownNow() 方法的返回值返回
 
+PS：对于生产者 - 消费者服务的线程终止，可以采用“毒丸”，即毒丸对象是生产者生产的一条特殊任务，然后当消费者线程读到“毒丸”对象时，会立即终止自身的执行。我们可以按照如下代码的范式进行结束：  
+```
+class Logger {
+  // 用于终止日志执行的“毒丸”
+  final LogMsg poisonPill = new LogMsg(LEVEL.ERROR, "");
+  // 任务队列  
+  final BlockingQueue<LogMsg> bq = new BlockingQueue<>();
+  // 只需要一个线程写日志
+  ExecutorService es = Executors.newFixedThreadPool(1);
+  // 启动写日志线程
+  void start(){
+    File file=File.createTempFile("foo", ".log");
+    final FileWriter writer = new FileWriter(file);
+    this.es.execute(()->{
+      try {
+        while (true) {
+          LogMsg log = bq.poll(5, TimeUnit.SECONDS);
+          // 如果是“毒丸”，终止执行  
+          if(poisonPill.equals(logMsg)){
+            break;
+          }  
+          // 省略执行逻辑
+        }
+      } catch(Exception e){
+        
+      } finally {
+        try {
+          writer.flush();
+          writer.close();
+        }catch(IOException e){}
+      }
+    });  
+  }
+  // 终止写日志线程
+  public void stop() {
+    // 将“毒丸”对象加入阻塞队列
+    bq.add(poisonPill);
+    es.shutdown();
+  }
+}
+```
 
 
 ## 3. 总结  
