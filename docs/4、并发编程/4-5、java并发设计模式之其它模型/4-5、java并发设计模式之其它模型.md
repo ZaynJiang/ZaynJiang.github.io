@@ -103,6 +103,191 @@ public static void main(String[] args) throws InterruptedException {
 Actor 可以创建新的 Actor，这些 Actor 最终会呈现出一个树状结构。Actor 模型和现实世界一样都是异步模型，理论上不保证消息百分百送达，也不保证消息送达的顺序和发送的顺序是一致的，甚至无法保证消息会被百分百处理 
 
 ## 3. Stm模型
+&emsp;&emsp;我们在学习事务的时候，知道事务总结出了4个特性，原子性（Atomicity）、一致性（Consistency）、隔离性（Isolation）和持久性（Durability）。  
+&emsp;&emsp;通俗来讲，如果数据库中的SQL 都正常执行，则通过 commit() 方法提交事务；如果 SQL 在执行过程中有异常，则通过 rollback() 方法回滚事务。数据库保证在并发情况下不会有死锁，而且还能保证前面我们说的原子性、一致性、隔离性和持久性，也就是 ACID。
+### 3.1. java中的STM  
+Java 语言并不支持 STM，不过可以借助第三方的类库来支持，如Multiverse  
+```
+class Account{
+  // 余额
+  private TxnLong balance;
+  // 构造函数
+  public Account(long balance){
+    this.balance = StmUtils.newTxnLong(balance);
+  }
+  // 转账
+  public void transfer(Account to, int amt){
+    // 原子化操作
+    atomic(()->{
+      if (this.balance.get() > amt) {
+        this.balance.decrement(amt);
+        to.balance.increment(amt);
+      }
+    });
+  }
+}
+```
+### 3.2. Multiverse的STM基本原理    
+其实和数据库的实现类似，即MVCC（多版本并发控制）:  
+* 数据库事务在开启的时候，会给数据库打一个快照,以后所有的读写都是基于这个快照的
+* 当提交事务的时候，如果所有读写过的数据在该事务执行期间没有发生过变化，那么就可以提交
+* 如果发生了变化，说明该事务和有其他事务读写的数据冲突了，这个时候是不可以提交的
+
+### 3.3. 自己实现java的STM 
+```
+  // 带版本号的对象引用
+  public final class VersionedRef<T> {
+    final T value;
+    final long version;
+    // 构造方法
+    public VersionedRef(T value, long version) {
+      this.value = value;
+      this.version = version;
+    }
+  }
+  // 支持事务的引用
+  public class TxnRef<T> {
+    // 当前数据，带版本号
+    volatile VersionedRef curRef;
+    // 构造方法
+    public TxnRef(T value) {
+      this.curRef = new VersionedRef(value, 0L);
+    }
+    // 获取当前事务中的数据
+    public T getValue(Txn txn) {
+      return txn.get(this);
+    }
+    // 在当前事务中设置数据
+    public void setValue(T value, Txn txn) {
+      txn.set(this, value);
+    }
+  }
+```  
+* VersionedRef 这个类的作用就是将对象 value 包装成带版本号的对象
+* 数据的每一次修改都对应着一个唯一的版本号，所以不存在仅仅改变 value 或者 version 的情况，所以这里使用不变性模式
+* 对数据的读写操作，一定是在一个事务里面，TxnRef 这个类负责完成事务内的读写操作。
+* 读写操作委托给了接口 Txn，Txn 代表的是读写操作所在的当前事务， 内部持有的 curRef 代表的是系统中的最新值
+
+```
+// 事务接口
+public interface Txn {
+  <T> T get(TxnRef<T> ref);
+  <T> void set(TxnRef<T> ref, T value);
+}
+//STM 事务实现类
+public final class STMTxn implements Txn {
+  // 事务 ID 生成器
+  private static AtomicLong txnSeq = new AtomicLong(0);
+  
+  // 当前事务所有的相关数据
+  private Map<TxnRef, VersionedRef> inTxnMap = new HashMap<>();
+  // 当前事务所有需要修改的数据
+  private Map<TxnRef, Object> writeMap = new HashMap<>();
+  // 当前事务 ID
+  private long txnId;
+  // 构造函数，自动生成当前事务 ID
+  STMTxn() {
+    txnId = txnSeq.incrementAndGet();
+  }
+ 
+  // 获取当前事务中的数据
+  @Override
+  public <T> T get(TxnRef<T> ref) {
+    // 将需要读取的数据，加入 inTxnMap
+    if (!inTxnMap.containsKey(ref)) {
+      inTxnMap.put(ref, ref.curRef);
+    }
+    return (T) inTxnMap.get(ref).value;
+  }
+  // 在当前事务中修改数据
+  @Override
+  public <T> void set(TxnRef<T> ref, T value) {
+    // 将需要修改的数据，加入 inTxnMap
+    if (!inTxnMap.containsKey(ref)) {
+      inTxnMap.put(ref, ref.curRef);
+    }
+    writeMap.put(ref, value);
+  }
+  // 提交事务
+  boolean commit() {
+    synchronized (STM.commitLock) {
+    // 是否校验通过
+    boolean isValid = true;
+    // 校验所有读过的数据是否发生过变化
+    for(Map.Entry<TxnRef, VersionedRef> entry : inTxnMap.entrySet()){
+      VersionedRef curRef = entry.getKey().curRef;
+      VersionedRef readRef = entry.getValue();
+      // 通过版本号来验证数据是否发生过变化
+      if (curRef.version != readRef.version) {
+        isValid = false;
+        break;
+      }
+    }
+    // 如果校验通过，则所有更改生效
+    if (isValid) {
+      writeMap.forEach((k, v) -> {
+        k.curRef = new VersionedRef(v, txnId);
+      });
+    }
+    return isValid;
+  }
+}
+```
+* STMTxn 是 Txn 最关键的一个实现类
+* STMTxn 内部有两个 Map：inTxnMap、writeMap，用于保存当前事务中所有读写的数据的快照
+* get() 方法将要读取数据作为快照放入 inTxnMap,每次读取的数据都是一个版本
+* set() 方法会将要写入的数据放入 writeMap，但如果写入的数据没被读取过，也会将其放入 inTxnMap。
+*  commit() 方法，我们为了简化实现，使用了互斥锁，所以事务的提交是串行的。commit() 方法的实现很简单，首先检查 inTxnMap 中的数据是否发生过变化，如果没有发生变化，那么就将 writeMap 中的数据写入（这里的写入其实就是 TxnRef 内部持有的 curRef）；如果发生过变化，那么就不能将 writeMap 中的数据写入了
+
+```
+@FunctionalInterface
+public interface TxnRunnable {
+  void run(Txn txn);
+}
+//STM
+public final class STM {
+  // 私有化构造方法
+  private STM() {
+  // 提交数据需要用到的全局锁  
+  static final Object commitLock = new Object();
+  // 原子化提交方法
+  public static void atomic(TxnRunnable action) {
+    boolean committed = false;
+    // 如果没有提交成功，则一直重试
+    while (!committed) {
+      // 创建新的事务
+      STMTxn txn = new STMTxn();
+      // 执行业务逻辑
+      action.run(txn);
+      // 提交事务
+      committed = txn.commit();
+    }
+  }
+}
+```
+* Multiverse 中的原子化操作 atomic()。
+* atomic() 方法中使用了类似于 CAS 的操作
+* 如果事务提交失败，那么就重新创建一个新的事务，重新执行
+
+```
+class Account {
+  // 余额
+  private TxnRef<Integer> balance;
+  // 构造方法
+  public Account(int balance) {
+    this.balance = new TxnRef<Integer>(balance);
+  }
+  // 转账操作
+  public void transfer(Account target, int amt){
+    STM.atomic((txn)->{
+      Integer from = balance.getValue(txn);
+      balance.setValue(from-amt, txn);
+      Integer to = target.balance.getValue(txn);
+      target.balance.setValue(to+amt, txn);
+    });
+  }
+}
+```
 
 ## 4. 协程模型
 线程是个重量级的对象，不能频繁创建、销毁，而且线程切换的成本也很高。为了解决这个问题。出现了池化技术线程池，其实还有一种替代方案，协程技术，Java 语言里目前还没有，协程简单地理解为一种轻量级的线程。线程是在内核态中调度的，而协程是在用户态调度的，所以相对于线程来说，协程切换的成本更低。  
