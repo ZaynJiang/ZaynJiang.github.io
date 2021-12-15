@@ -35,54 +35,15 @@ netty已经提供了jdk nio了，为什么还要使用netty呢？
 * 隔离了变化、屏蔽了细节  
 
 
-
-## 2. netty的reactor模型
-Netty对上面的三种reactor模型都是支持,具体的写法如下：  
-```
-public static void test1() {
-    //reactor单线程模型
-    EventLoopGroup eventLoopGroup = new NioEventLoopGroup(1);
-    ServerBootstrap serverBootstrap = new ServerBootstrap();
-    serverBootstrap.group(eventLoopGroup);
-}
-public static void test2() {
-    //reactor多线程模型
-    EventLoopGroup eventLoopGroup = new NioEventLoopGroup();
-    ServerBootstrap serverBootstrap = new ServerBootstrap();
-    serverBootstrap.group(eventLoopGroup);
-}
-public static void test3(){
-    //reactor主从模型
-    EventLoopGroup bossGroup = new NioEventLoopGroup();
-    EventLoopGroup workGroup = new NioEventLoopGroup();
-    ServerBootstrap serverBootstrap = new ServerBootstrap();
-    serverBootstrap.group(bossGroup, workGroup);
-}
-```
-
-## 3. Netty运行机制
-* 创建workgroup线程组（管理socketchannel的）、创建boss线程组（管理serversocketchannel的）
-* Serverbootstrap绑定端口
-* 用户请求服务端建立连接
-* bossgroup使用线程池acceptor连接，并获取socketchannel注册到workgroup
-* workgroup使用handler处理socketchannel  
-
-![](netty的网络模型.png)  
-
-
-## 4. Netty的优化  
-
-* eventloop阻塞
-* 系统参数
-* 缓冲区
-* 直接内存
-* 其它  
-
-![](netty优化.png)  
-
-
-## 5. 粘包的解决
-ByteToMessageDecoder提供一些实现类来解决tcp的粘包问题，FixedLengthFrameDecoder（定长），LineBasedFrameDecoder（行分隔符），DelimiterBasedFrameDecoder（自定义分隔符），LengthFieldBasedFrameDecoder（长度编码，在消息头传输长度），JsonObjectDecoder（json分隔符）    
-
-
-## 6. 总结
+## 4. netty的现状和发展  
+* netty 4.1.39.Final(2019.8)
+* netty 3.10.6.Final(2016.6)  
+### 4.1. netty的使用者  
+spark、hadoop、rocketmq、elasticsearch、grpc、dubbo、spring5、zk
+  
+### 4.2. netty未来趋势  
+* 更多流行的趋势
+* jdk的更新
+* 更易用、人性化的
+* ip黑白名单、流量整形
+* 应用推广
