@@ -12,7 +12,7 @@
    ![](图片3.png)   
 * 选择一个executor，这里有个优化算法，根据是否为2的倍数，放入到EventExecutorChooserFactory.EventExecutorChooser chooser     
   ![](图片4.png)  
- 由上可知，创建eventloopgroup对象的时候会创建一个eventloop对象数组，每一个eventloop对象持有一个创建的selector对象。  
+   由上可知，创建eventloopgroup对象的时候会创建一个eventloop对象数组，每一个eventloop对象持有一个创建的selector对象。  
 
 
  ### 2.2. 创建serversocketchannel，并初始化  
