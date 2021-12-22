@@ -1,23 +1,7 @@
-## 1. 代码结构  
-![](netty代码结构.png)
-* Codec，各种协议
-* Netty-common，放了一些常用的工具类
-* Handle，放了很多人性化的定制功能，过滤，日志，流控等  
-  ![](netty-handler结构.png)
-* Resolver，地址解析
-* Transport,各种channel
-* Rxtx,淘汰了，不好加测试
-* Transport-udt被废弃了，因为依赖了
-* barchart-udt-bundle包，没人维护了  
-
-
-## 2. 代码编译    
-
-
-## 3. 客户端启动
+## 1. 客户端启动
 &emsp;&emsp;Bootstrap 是 Netty 提供的一个便利的工厂类, 我们可以通过它来完成 Netty 的客户端或服务器端的 Netty 初始化。
 
-### 3.1. 客户端示例
+### 1.1. 客户端示例
 ```
     // Configure the client.
     EventLoopGroup group = new NioEventLoopGroup();
@@ -47,14 +31,14 @@
         // Shut down the event loop to terminate all threads.
         group.shutdownGracefully();
     }
-```  
+```
 这里有三大大关键点
 * 指定了EventLoopGroup（客户端和服务端都必须指定）
 * 指定了ChannelType的类型，这里指定了NioSocketChannel.class
 * 设置了Handler: 设置数据的处理器  
 
 
-### 3.2. NioSocketChannel  
+### 2. NioSocketChannel  
 ![](niosocketchannel类图.png)    
 如上图所示，NioSocketChannel实现了socketchannel, 而socketchannel是java nio中的管道，它原生有如下这么几种实现。  
 * FileChannel, 文件操作
@@ -72,13 +56,13 @@
 * OioDatagramChannel, 同步的 UDP 连接
 * OioSctpChannel, 同步的 Sctp 服务器端连接.
 * OioSctpServerChannel, 同步的客户端 TCP Socket 连接.
-#### 3.2.1. NioSocketChannel创建
+#### 2.1. NioSocketChannel创建
 * bootstrap设置配置NioSocketChannel类型
   ```
         Bootstrap b = new Bootstrap();
         b.group(group)
           .channel(NioSocketChannel.class)
-  ``` 
+  ```
 * channel()将传入一个channelFactory的反射工厂，初始化给Bootstrap，channelFactory可以以创建channel
   ```
       public B channel(Class<? extends C> channelClass) {
@@ -97,7 +81,7 @@
             throw new ChannelException("Unable to create Channel from class " + constructor.getDeclaringClass(), t);
         }
     }
-  ```  
+  ```
 
 * channel实例化 
   channel是在Bootstrap.doConnect调用AbstractBootstrap.initAndRegister的时候创建的。  
@@ -148,6 +132,7 @@
           }
           ```
          * 继续调用父类构造器实例化unsafe和pipeline
+      
           ```
           protected AbstractChannel(Channel parent) {
               this.parent = parent;
@@ -162,7 +147,7 @@
                   config = new NioSocketChannelConfig(this, socket.socket());
               }
             ```
-#### 3.2.2. NioSocketChannel小结
+#### 2.2. NioSocketChannel小结
 * 调用 NioSocketChannel.newSocket(DEFAULT_SELECTOR_PROVIDER) 打开一个新的 Java NIO SocketChannel
 * AbstractChannel(Channel parent) 中初始化 AbstractChannel 的属性:
   * parent 属性置为 null
@@ -178,10 +163,10 @@
    * SocketChannelConfig config = new NioSocketChannelConfig(this, socket.socket())  
 
 
-### 3.3. unsafe  
+### 3. unsafe  
 &emsp;&emsp;在niosocketchannel的实例化的时候，会实例化一个unsafe。unsafe 很重要。
 &emsp;&emsp;它封装了对 Java 底层 Socket 的操作, 因此实际上是沟通 Netty 上层和 Java 底层的重要的桥梁.  
-#### 3.3.1. unsafe的核心方法  
+#### 3.1. unsafe的核心方法  
 这些方法其实都会对应到相关的 Java 底层的 Socket 的操作
 ```
 interface Unsafe {
@@ -202,18 +187,18 @@ interface Unsafe {
 }
 ```
 
-#### 3.3.2. unsafe的实例化  
+#### 3.2. unsafe的实例化  
 &emsp;&emsp;在niosocketchannle实例化的时候，会调用创建unsafe对象的方法。  
 NioSocketChannel.newUnsafe 方法会返回一个 NioSocketChannelUnsafe 实例. 从这里我们就可以确定了, 在实例化的 NioSocketChannel 中的 unsafe 字段, 其实是一个 NioSocketChannelUnsafe 的实例
 ```
     protected AbstractNioUnsafe newUnsafe() {
         return new NioSocketChannelUnsafe();
     }
-```  
-### 3.4. pipeline   
+```
+### 4. pipeline   
 &emsp;&emsp;在niosocketchannle实例化的时候，会调用创建 ChannelPipeline 对象的方法。 它实例化的是默认的channelpipeline对象
 
-#### 3.4.1. pipeline的实例化   
+#### 4.1. pipeline的实例化   
 ```
     protected DefaultChannelPipeline(Channel channel) {
         this.channel = ObjectUtil.checkNotNull(channel, "channel");
@@ -227,7 +212,7 @@ NioSocketChannel.newUnsafe 方法会返回一个 NioSocketChannelUnsafe 实例. 
         tail.prev = head;
     }
 ```
-#### 3.4.2. pipeline关键属性 
+#### 4.2. pipeline关键属性 
 DefaultChannelPipeline对象关键点：
 * 有两个特殊的字段, 即 head 和 tail, 而这两个字段是一个双向链表的头和尾
 * 维护了一个以 AbstractChannelHandlerContext 为节点的双向链表, 这个链表是 Netty 实现 Pipeline 机制的关键  
@@ -237,7 +222,7 @@ TailContext的结构：
 HeadContext的结构：
 ![](head-context类关系.png)  
 
-#### 3.4.3. HeadContext、TailContext实例化   
+#### 4.3. HeadContext、TailContext实例化   
 
 ```
 HeadContext(DefaultChannelPipeline pipeline) {
@@ -251,18 +236,18 @@ HeadContext(DefaultChannelPipeline pipeline) {
 * header 是一个 outboundHandler, 而 tail 是一个inboundHandler
 
 
-### 3.5. EventLoop  
+### 5. EventLoop  
 在客户端示例最开始就需要创建一个NioEventLoopGroup
-### 3.5. NioEventLoopGroup  
+### 5.1. NioEventLoopGroup  
 ![](eventloopgroup.png)    
 
-#### 3.5.1. NioEventLoopGroup实例化
+#### 5.2. NioEventLoopGroup实例化
 * 实例化的时候最终调用的是MultithreadEventLoopGroup的构造方法：
 ```
 protected MultithreadEventLoopGroup(int nThreads, ThreadFactory threadFactory, Object... args) {
     super(nThreads == 0? DEFAULT_EVENT_LOOP_THREADS : nThreads, threadFactory, args);
 }
-```  
+```
 * 设置线程数,如果没有传入线程数或者为0的话，会设置系统定义的线程数。即：处理器核心数 * 2
   ```
   static {
@@ -279,7 +264,7 @@ protected MultithreadEventLoopGroup(int nThreads, ThreadFactory threadFactory, O
     } else {
         chooser = new GenericEventExecutorChooser();
     }
-
+  
     for (int i = 0; i < nThreads; i ++) {
         children[i] = newChild(threadFactory, args);
     }
@@ -299,7 +284,7 @@ protected MultithreadEventLoopGroup(int nThreads, ThreadFactory threadFactory, O
   * 总的概括下就是MultithreadEventExecutorGroup 内部维护了一个 EventExecutor 数组, Netty 的 EventLoopGroup 的实现机制其实就建立在 MultithreadEventExecutorGroup 之上. 每当 Netty 需要一个 EventLoop 时, 会调用 next()       
 
 
-#### 3.5.2. NioEventLoopGroup小结 
+#### 5.3. NioEventLoopGroup小结 
 * EventLoopGroup(其实是MultithreadEventExecutorGroup) 内部维护一个类型为EventExecutor children 数组, 其大小是 nThreads, 这样就构成了一个线程池
 * 如果我们在实例化 NioEventLoopGroup 时, 如果指定线程池大小, 则 nThreads 就是指定的值, 反之是处理器核心数乘以2
 * MultithreadEventExecutorGroup 中会调用 newChild 抽象方法来初始化 children 数组
@@ -309,7 +294,7 @@ protected MultithreadEventLoopGroup(int nThreads, ThreadFactory threadFactory, O
   * Selector selector 属性: NioEventLoop 构造器中通过调用通过 selector = provider.openSelector() 获取一个 selector 对象.
 
 
-### 3.6. channel的注册  
+### 6. channel的注册  
 之前我们提到Bootstrap在connect的时候会Bootstrap.initAndRegister，这个会注册nisocketchannel  
 ```
 final ChannelFuture initAndRegister() {
@@ -322,7 +307,7 @@ final ChannelFuture initAndRegister() {
 具体会怎么注册这个nisocketchannel呢？ 跟踪源码可以看到，调用链为：
 AbstractBootstrap.initAndRegister -> MultithreadEventLoopGroup.register -> SingleThreadEventLoop.register -> AbstractUnsafe.register  
 最终会调用到unsafe 的 register 方法, 那么接下来我们就仔细看一下 AbstractUnsafe.register 
-#### 3.6.1. channel的注册流程 
+#### 6.1. channel的注册流程 
 ```
   public ChannelFuture register(Channel channel) {
       return next().register(channel);
@@ -373,8 +358,7 @@ protected void doRegister() throws Exception {
 这里就是核心代码了：
 * javaChannel() 这个方法在前面我们已经知道了, 它返回的是一个 Java NIO SocketChannel
 * SocketChannel 注册到与 eventLoop 关联的 selector 上了
-  
-#### 3.6.2. channel的注册小结  
+#### 6.2. channel的注册小结  
 &emsp;&emsp;Channel 注册过程所做的工作就是将 Channel 与对应的 EventLoop 关联, 因此这也体现了, 在 Netty 中, 每个 Channel 都会关联一个特定的 EventLoop, 并且这个 Channel 中的所有 IO 操作都是在这个 EventLoop 中执行的;   
 &emsp;&emsp;当关联好 Channel 和 EventLoop 后, 会继续调用底层的 Java NIO SocketChannel 的 register 方法, 将底层的 Java NIO SocketChannel 注册到指定的 selector 中. 通过这两步, 就完成了 Netty Channel 的注册过程   
 
@@ -389,6 +373,163 @@ protected void doRegister() throws Exception {
 
 * 在 AbstractUnsafe.register0 中, 调用 AbstractNioChannel.doRegister 方法
 
-* AbstractNioChannel.doRegister 方法通过 javaChannel().register(eventLoop().selector, 0, this) 将 Channel 对应的 Java NIO SockerChannel 注册到一个 eventLoop 的 Selector 中, 并且将当前 Channel 作为 attachment。  
+* AbstractNioChannel.doRegister 方法通过 javaChannel().register(eventLoop().selector, 0, this) 将 Channel 对应的 Java NIO SockerChannel 注册到一个 eventLoop 的 Selector 中, 并且将当前 Channel 作为 attachment。    
+
+### 7. handler 
+&emsp;&emsp;Netty 的一个强大和灵活之处就是基于 Pipeline 的自定义 handler 机制。 我们可以像添加插件一样自由组合各种各样的 handler 来完成业务逻辑    
+#### 7.1. handler使用样例  
+```
+  handler(new ChannelInitializer<SocketChannel>() {
+                @Override
+                public void initChannel(SocketChannel ch) throws Exception {
+                    ChannelPipeline p = ch.pipeline();
+                    if (sslCtx != null) {
+                        p.addLast(sslCtx.newHandler(ch.alloc(), HOST, PORT));
+                    }
+                    p.addLast(new LoggingHandler(LogLevel.INFO));
+                    p.addLast(new EchoClientHandler());
+                }
+            });
+```
+#### 7.2. handler的机制
+* Bootstrap.handler 方法接收一个 ChannelHandler, 而我们传递的是一个 派生于 ChannelInitializer 的匿名类
+* 我们需要实现一个抽象的initChannel方法
+  ```
+      protected abstract void initChannel(C ch) throws Exception;
+      @Override
+      @SuppressWarnings("unchecked")
+      public final void channelRegistered(ChannelHandlerContext ctx) throws Exception {
+          // Normally this method will never be called as handlerAdded(...) should call initChannel(...) and remove
+          // the handler.
+          if (initChannel(ctx)) {
+              // we called initChannel(...) so we need to call now pipeline.fireChannelRegistered() to ensure we not
+              // miss an event.
+              ctx.pipeline().fireChannelRegistered();
+  
+              // We are done with init the Channel, removing all the state for the Channel now.
+              removeState(ctx);
+          } else {
+              // Called initChannel(...) before which is the expected behavior, so just forward the event.
+              ctx.fireChannelRegistered();
+          }
+      }
+  ```
+* channelRegistered 方法中, 会调用 initChannel 方法, 将自定义的 handler 添加到 ChannelPipeline
+* 然后调用 ctx.pipeline().remove(this) 将自己从 ChannelPipeline 中删除.  
+即如下流程：  
+调用 initChannel 方法, 将自定义的 handler 添加到 ChannelPipeline  
+![](channelinitalizer1.png)   
+initChannel 方法调用后, 添加了自定义的 handler  
+![](channelinitalizer2.png)      
+最后将 ChannelInitializer 删除   
+![](channelinitalizer3.png)     
 
 
+### 8. 客户端连接  
+在开始，我们已经知道建立连接时会执行一些初始化的操作。后面就会调用一个核心方法来进行连接，即 event loop 线程中调用 Channel 的 connect 方法
+```
+  private static void doConnect(
+            final SocketAddress remoteAddress, final SocketAddress localAddress, final ChannelPromise connectPromise) {
+        final Channel channel = connectPromise.channel();
+        channel.eventLoop().execute(new Runnable() {
+            @Override
+            public void run() {
+                if (localAddress == null) {
+                    channel.connect(remoteAddress, connectPromise);
+                } else {
+                    channel.connect(remoteAddress, localAddress, connectPromise);
+                }
+                connectPromise.addListener(ChannelFutureListener.CLOSE_ON_FAILURE);
+            }
+        });
+    }
+```
+#### 8.1. 建立连接流程  
+* io.netty.bootstrap.Bootstrap#doConnect
+* io.netty.channel.AbstractChannel#connect(java.net.SocketAddress, io.netty.channel.ChannelPromise)
+* io.netty.channel.DefaultChannelPipeline#connect(java.net.SocketAddress, io.netty.channel.ChannelPromise) 
+* AbstractChannelHandlerContext.connect。   
+  final AbstractChannelHandlerContext next = findContextOutbound()是个关键代码，从 DefaultChannelPipeline 内的双向链表的 tail 开始, 不断向前寻找第一个 outbound 为 true 的 AbstractChannelHandlerContext, 然后调用它的 invokeConnect 方法
+  ```
+  public ChannelFuture connect(
+            final SocketAddress remoteAddress, final SocketAddress localAddress, final ChannelPromise promise) {
+        final AbstractChannelHandlerContext next = findContextOutbound(MASK_CONNECT);
+        EventExecutor executor = next.executor();
+        if (executor.inEventLoop()) {
+            next.invokeConnect(remoteAddress, localAddress, promise);
+        } else {
+            safeExecute(executor, new Runnable() {
+                @Override
+                public void run() {
+                    next.invokeConnect(remoteAddress, localAddress, promise);
+                }
+            }, promise, null);
+        }
+        return promise;
+    }
+  ```
+* AbstractChannelHandlerContext调用invokeConnect  
+  ```
+  private void invokeConnect(SocketAddress remoteAddress, SocketAddress localAddress, ChannelPromise promise) {
+      ((ChannelOutboundHandler) handler()).connect(this, remoteAddress, localAddress, promise);
+  }
+  ```
+  * DefaultChannelPipeline之前讲过， 会实例化两个对象: head 和 tail形成了双向链表的头和尾。 head 是 HeadContext 的实例, 它实现了 ChannelOutboundHandler 接口, 并且它的 outbound 字段为 true. 因此在 findContextOutbound 中, 找到的 AbstractChannelHandlerContext 对象其实就是 head. 进而在 invokeConnect 方法中, 我们向上转换为 ChannelOutboundHandler 就是没问题的了.
+  而又因为 HeadContext 重写了 connect 方法, 因此实际上调用的是 HeadContext.connect.
+
+* headcontext的connect方法
+  ```
+    public void connect(
+          ChannelHandlerContext ctx,
+          SocketAddress remoteAddress, SocketAddress localAddress,
+          ChannelPromise promise) throws Exception {
+      unsafe.connect(remoteAddress, localAddress, promise);
+  }
+  ```
+* unsafe是AbstractNioByteChannel.NioByteUnsafe 内部类 ，是实例化时 pipeline.channel().unsafe()赋予的 
+* 最终会通过NioByteUnsafe调用AbstractNioUnsafe.connect
+  ```
+    @Override
+  public final void connect(
+          final SocketAddress remoteAddress, final SocketAddress localAddress, final ChannelPromise promise) {
+      boolean wasActive = isActive();
+      if (doConnect(remoteAddress, localAddress)) {
+          fulfillConnectPromise(promise, wasActive);
+      } else {
+          ...
+      }
+  }
+  ```
+  connect 方法中, 调用了 doConnect 方法  
+  注意, 这个方法并不是 AbstractNioUnsafe 的方法, 而是 AbstractNioChannel 的抽象方法. doConnect 方法是在 NioSocketChannel 中实现的, 因此进入到 NioSocketChannel.doConnect 
+* 终于到了最关键的代码，NioSocketChannel.doConnect 
+  ```
+     protected boolean doConnect(SocketAddress remoteAddress, SocketAddress localAddress) throws Exception {
+        if (localAddress != null) {
+            doBind0(localAddress);
+        }
+  
+        boolean success = false;
+        try {
+            boolean connected = SocketUtils.connect(javaChannel(), remoteAddress);
+            if (!connected) {
+                selectionKey().interestOps(SelectionKey.OP_CONNECT);
+            }
+            success = true;
+            return connected;
+        } finally {
+            if (!success) {
+                doClose();
+            }
+        }
+    }
+  ```
+  首先是获取 Java NIO SocketChannel, 即我们已经分析过的, 从 NioSocketChannel.newSocket 返回的 SocketChannel 对象; 然后是调用 SocketChannel.connect 方法完成 Java NIO 层面上的 Socket 的连接  
+
+
+  #### 8.2. 建立连接时序图  
+  ![](客户端建立连接时序图.png)  
+
+
+
+  ## 9. 总结
