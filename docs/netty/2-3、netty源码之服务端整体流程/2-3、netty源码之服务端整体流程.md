@@ -1,5 +1,8 @@
-## 1. 介绍
+## 1. 基本介绍
 ### 1.1. 服务端示例代码   
+
+代码来自官方示例：
+
 ```
 // Configure the server.
 EventLoopGroup bossGroup = new NioEventLoopGroup();
@@ -37,7 +40,7 @@ try {
     workerGroup.shutdownGracefully();
 }
 ```
-和客户端的代码很类似：  
+和客户端的代码类似，这里有三大关键点：  
 * EventLoopGroup: 不论是服务器端还是客户端, 都必须指定 EventLoopGroup.   
   * 在这个例子中, 指定了 NioEventLoopGroup, 表示一个 NIO 的EventLoopGroup  
   * 服务器端需要指定两个 EventLoopGroup, 一个是 bossGroup, 用于处理客户端的连接请求; 
@@ -46,8 +49,8 @@ try {
 * Handler: 设置数据的处理器  
 
 ## 2. Channel的初始化  
-&emsp;&emsp;我们在java的nio中已经知道了Channel 是对 Java 底层 Socket 连接的抽象，在netty的客户端中，Channel 的具体类型是 NioSocketChannel， 服务端是NioServerSocketChannel  
-### 2.1. Channel类型确定
+&emsp;&emsp;我们在java的nio中已经知道了Channel 是对 Java 底层 Socket 连接的抽象，在netty的客户端中Channel 的具体类型是 NioSocketChannel， 而我们的服务端是NioServerSocketChannel  
+### 2.1. Channel类型声明
 &emsp;&emsp;和客户端类似也是传入class对象，即，ServerBootstarap.channel(NioServerSocketChannel.class)，最终NioServerSocketChannel 的实例化是通过 BootstrapChannelFactory 工厂类来完成的，BootstrapChannelFactory 中的 clazz 字段被设置为了 NioServerSocketChannel.class, 因此当调用 BootstrapChannelFactory.newChannel()  
 ```
 @Override
@@ -61,10 +64,10 @@ public T newChannel() {
 * Channel 的实例化过程, 其实就是调用的 ChannelFactory.newChannel 方法, 生成的的 Channel 实例就是 NioServerSocketChannel.   
 
 
-### 2.2. 服务端channel  
+### 2.2. ServerSocketChannel 的实例化  
 ![](niosocketchannel类.png)    
 
-* 创建ServerSocketChannel   
+* 创建ServerSocketChannel 对象
     * 和客户端NioSocketChannel类似, 构造器都是调用了 newSocket 来打开一个 Java 的 NIO Socket。不过需要注意的是, 客户端的 newSocket 调用的是 openSocketChannel, 而服务器端的 newSocket 调用的是openServerSocketChannel
     ```
     private static ServerSocketChannel newSocket(SelectorProvider provider) {
@@ -204,6 +207,7 @@ nioserversocketchannel的过程为：
     * childGroup.register 就是将 workerGroup 中的某个 EventLoop 和 NioSocketChannel关联
   * ServerBootstrapAcceptor的channelRead的方法的调用   
     一个 client 连接到 server 时, Java 底层的 NIO ServerSocketChannel 会有一个 SelectionKey.OP_ACCEPT，然后就会调用到 NioServerSocketChannel.doReadMessages  
+    
     ```
     @Override
     protected int doReadMessages(List<Object> buf) throws Exception {
