@@ -223,6 +223,20 @@ nioserversocketchannel的过程为：
     * 接下来就经由 Netty 的 ChannelPipeline 机制, 将读取事件逐级发送到各个 handler 中, 于是就会触发前面我们提到的 ServerBootstrapAcceptor.channelRead 方法
 
 
+
+5.3.  小结
+
+* ServerBootstrap会初始化serversocketchannel,并注册
+
+  selectionKey = javaChannel().register(eventLoop().unwrappedSelector(), 0, this )
+
+* 然后server会开启evenloop线程
+
+* 将socketchannel与serversocketchannel绑定起来了。
+
+  
+
+
 ## 6. handler  
 &emsp;&emsp;服务器端的 handler 的添加过程和客户端的有点区别, 服务器端的 handler 也有两个: 
 * 一个是通过 handler() 方法设置 handler 字段，与 accept 过程有关, 即这个 handler 负责处理客户端的连接请求; 

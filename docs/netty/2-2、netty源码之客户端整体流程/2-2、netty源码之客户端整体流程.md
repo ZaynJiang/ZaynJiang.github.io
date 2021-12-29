@@ -292,6 +292,7 @@ protected MultithreadEventLoopGroup(int nThreads, ThreadFactory threadFactory, O
 * NioEventLoop 属性:
   * SelectorProvider provider 属性: NioEventLoopGroup 构造器中通过 SelectorProvider.provider() 获取一个 SelectorProvider
   * Selector selector 属性: NioEventLoop 构造器中通过调用通过 selector = provider.openSelector() 获取一个 selector 对象.
+* 创建eventloopgroup对象的时候会创建一个eventloop对象数组，每一个eventloop对象持有一个创建的selector对象
 
 
 ### 6. channel的注册  
