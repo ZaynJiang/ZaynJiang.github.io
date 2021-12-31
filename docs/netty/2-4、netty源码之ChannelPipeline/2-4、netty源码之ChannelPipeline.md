@@ -361,4 +361,228 @@ pipeline.fireChannelRegistered()会最终调用。head.fireChannelRegistered。
 ```
 
 
-## 4. Pipeline的事件传输机制
+## 4. Pipeline的事件传输机制  
+### 4.1. Pipeline的事件传输整体介绍
+&emsp;&emsp;AbstractChannelHandlerContext是有 inbound 和 outbound 之分的，inbound的ChannelHandler 实现了 ChannelInboundHandler 方法。outbound对应的ChannelHandler实现了ChannelOutboundHandler方法。  
+&emsp;&emsp;inbound 事件和 outbound 事件的流向是不一样的, inbound 事件的流行是从下至上, 而 outbound 刚好相反, 是从上到下
+
+
+### 4.2. ChannelHandlerContext的outbound相关方法 
+#### 4.2.1. 主要的方法 
+```
+ChannelHandlerContext.bind(SocketAddress, ChannelPromise)
+ChannelHandlerContext.connect(SocketAddress, SocketAddress, ChannelPromise)
+ChannelHandlerContext.write(Object, ChannelPromise)
+ChannelHandlerContext.flush()
+ChannelHandlerContext.read()
+ChannelHandlerContext.disconnect(ChannelPromise)
+ChannelHandlerContext.close(ChannelPromise)
+```
+#### 4.2.2. outbound相关方法的特点
+* Outbound 事件都是请求事件，请求某件事情的发生，通过 Outbound 事件进行通知. 比如发起写，发起绑定、发起连接等等。
+* Outbound 事件的传播方向是 tail -> customContext -> head
+
+#### 4.2.3. 流程  
+我们以一个 Bootstrap.connect 事件为例，此时就会触发一个outbound的调用链表，Bootstrap.connect -> Bootstrap.doConnect -> Bootstrap.doConnect0 -> AbstractChannel.connect
+
+* 第一步会调用socketchannel的connect的方法  
+  io.netty.channel.AbstractChannel#connect(java.net.SocketAddress, io.netty.channel.ChannelPromise)
+* AbstractChannel.connect 其实由调用了 DefaultChannelPipeline.connect 方法
+  ```
+    @Override
+    public ChannelFuture connect(SocketAddress remoteAddress, ChannelPromise promise) {
+        return pipeline.connect(remoteAddress, promise);
+    }
+  ```
+ * pipeline.connectd其实是以tail 为起点开始传播的.而 tail.connect 其实调用的是 AbstractChannelHandlerContext.connect ‘
+    ```
+        public ChannelFuture connect(
+            final SocketAddress remoteAddress, final SocketAddress localAddress, final ChannelPromise promise) {
+
+            if (remoteAddress == null) {
+                throw new NullPointerException("remoteAddress");
+            }
+            if (isNotValidPromise(promise, false)) {
+                // cancelled
+                return promise;
+            }
+
+            final AbstractChannelHandlerContext next = findContextOutbound(MASK_CONNECT);
+            EventExecutor executor = next.executor();
+            if (executor.inEventLoop()) {
+                next.invokeConnect(remoteAddress, localAddress, promise);
+            } else {
+                safeExecute(executor, new Runnable() {
+                    @Override
+                    public void run() {
+                        next.invokeConnect(remoteAddress, localAddress, promise);
+                    }
+                }, promise, null);
+            }
+            return promise;
+        }
+    ```
+  * tail传播的时候会找到outbound的context，调用findContextOutbound(MASK_CONNECT);
+  * 当我们找到了一个 outbound 的 Context 后, 就调用它的 invokeConnect 方法, 这个方法中会调用 Context 所关联着的 ChannelHandler 的 connect 方法
+  * 如果用户没有重写 ChannelHandler 的 connect 方法, 那么会调用 ChannelOutboundHandlerAdapter
+    ```
+        @Override
+        public void connect(ChannelHandlerContext ctx, SocketAddress remoteAddress,
+                SocketAddress localAddress, ChannelPromise promise) throws Exception {
+            ctx.connect(remoteAddress, localAddress, promise);
+        }
+    ```
+   * ChannelOutboundHandlerAdapter.connect 仅仅调用了 ctx.connect, 而这个调用又回到了
+   * Context.connect -> Connect.findContextOutbound -> next.invokeConnect -> handler.connect -> Context.connect
+   * 最终connect 事件传递到head, 因为head实现了ChannelOutboundHandler。
+   * head的处理逻辑如下,到这里, 整个 Connect 请求事件就结束了
+     ```
+        @Override
+        public void connect(
+                ChannelHandlerContext ctx,
+                SocketAddress remoteAddress, SocketAddress localAddress,
+                ChannelPromise promise) throws Exception {
+            unsafe.connect(remoteAddress, localAddress, promise);
+        }
+     ```
+    ![](channelpipeline输出事件图.png)  
+
+
+### 4.3. ChannelHandlerContext的inbound相关方法
+#### 4.3.1. 主要方法 
+```
+ChannelHandlerContext.fireChannelRegistered()
+ChannelHandlerContext.fireChannelActive()
+ChannelHandlerContext.fireChannelRead(Object)
+ChannelHandlerContext.fireChannelReadComplete()
+ChannelHandlerContext.fireExceptionCaught(Throwable)
+ChannelHandlerContext.fireUserEventTriggered(Object)
+ChannelHandlerContext.fireChannelWritabilityChanged()
+ChannelHandlerContext.fireChannelInactive()
+ChannelHandlerContext.fireChannelUnregistered()
+```
+MyInboundHandler 收到了一个 channelActive 事件, 它在处理后, 如果希望将事件继续传播下去, 那么需要接着调用 ctx.fireChannelActive().
+
+```
+public class MyInboundHandler extends ChannelInboundHandlerAdapter {
+    @Override
+    public void channelActive(ChannelHandlerContext ctx) {
+        System.out.println("Connected!");
+        ctx.fireChannelActive();
+    }
+}
+```
+#### 4.3.2. 特点
+* Inbound 事件是一个通知事件，通过 Inbound 事件进行通知. Inbound 通常发生在 Channel 的状态的改变或 IO 事件就绪.
+* 它的传播链为head -> customContext -> tail.
+
+
+#### 4.3.3. 流程分析
+正如前面connect的outbound事件，最终会调用AbstractNioUnsafe.connect进行处理，其大致逻辑为
+```
+@Override
+public final void connect(
+        final SocketAddress remoteAddress, final SocketAddress localAddress, final ChannelPromise promise) {
+    ...
+    if (doConnect(remoteAddress, localAddress)) {
+        fulfillConnectPromise(promise, wasActive);
+    } else {
+        ...
+    }
+    ...
+}
+```
+* doConnect为调用原生的socket连接的方法， 当连接上后, 会调用 fulfillConnectPromise 方法
+  ```
+    private void fulfillConnectPromise(ChannelPromise promise, boolean wasActive) {
+        ...
+        // Regardless if the connection attempt was cancelled, channelActive() event should be triggered,
+        // because what happened is what happened.
+        if (!wasActive && isActive()) {
+            pipeline().fireChannelActive();
+        }
+        ...
+    }
+  ```
+*  fulfillConnectPromise 中, 会通过调用 pipeline().fireChannelActive() 将通道激活的消息(即 Socket 连接成功)发送出去
+* 当调用 pipeline.fireXXX 后, 就是 Inbound 事件的起点
+*  pipeline().fireChannelActive() 后, 就产生了一个 ChannelActive Inbound 事件
+  ```
+    @Override
+    public ChannelPipeline fireChannelActive() {
+        head.fireChannelActive();
+
+        if (channel.config().isAutoRead()) {
+            channel.read();
+        }
+
+        return this;
+    }
+  ```
+ * 此时调用的是 head.fireChannelActive, 因此可以证明了, Inbound 事件在 Pipeline 中传输的起点是 head
+ * 接着会查找所有的inbound的handler，进行实践传播处理
+   ```
+    public ChannelHandlerContext fireChannelActive() {
+            final AbstractChannelHandlerContext next = findContextInbound();
+            EventExecutor executor = next.executor();
+            ...
+            next.invokeChannelActive();
+            ...
+            return this;
+        }
+   ```
+   ```
+    private void invokeChannelActive() {
+        try {
+            ((ChannelInboundHandler) handler()).channelActive(this);
+        } catch (Throwable t) {
+            notifyHandlerException(t);
+        }
+    }
+   ```
+   * 如果用户没有重写 channelActive 方法, 那么会调用 ChannelInboundHandlerAdapter 的 channelActive 方法
+   ```
+    @Override
+        public void channelActive(ChannelHandlerContext ctx) throws Exception {
+            ctx.fireChannelActive();
+        }
+   ```
+   ChannelInboundHandlerAdapter.channelActive 中, 仅仅调用了 ctx.fireChannelActive
+
+   * 整个调用链串起来为：Context.fireChannelActive -> Connect.findContextInbound -> nextContext.invokeChannelActive -> nextHandler.channelActive -> nextContext.fireChannelActive
+   *  tail 本身 既实现了 ChannelInboundHandler 接口, 又实现了 ChannelHandlerContext 接口, 因此当 channelActive 消息传递到 tail 后, 会将消息转递到对应的 ChannelHandler 中处理, 而恰好, tail 的 handler() 返回的就是 tail 本身
+    ```
+    @Override
+    public ChannelHandler handler() {
+        return this;
+    }
+    ```
+    * channelActive Inbound 事件最终是在 tail 中处理的, 我们看一下它的处理方法
+    ```
+    @Override
+    public void channelActive(ChannelHandlerContext ctx) throws Exception { }
+    ```
+    TailContext.channelActive 方法是空的. 如果读者自行查看 TailContext 的 Inbound 处理方法时, 会发现, 它们的实现都是空的. 可见, 如果是 Inbound, 当用户没有实现自定义的处理器时, 那么默认是不处理的.
+
+
+其整体的流程图为：  
+![](channelpipeline输入事件图.png)
+
+
+## 5. 总结  
+&emsp;&emsp;对于 Outbound事件:
+* Outbound 事件是请求事件(由 Connect 发起一个请求, 并最终由 unsafe 处理这个请求)
+* Outbound 事件的发起者是 Channel
+* Outbound 事件的处理者是 unsafe
+* Outbound 事件在 Pipeline 中的传输方向是 tail -> head.
+* 在 ChannelHandler 中处理事件时, 如果这个 Handler 不是最后一个 handler, 则需要调用 ctx.xxx (例如 ctx.connect) 将此事件继续传播下去. 如果不这样做, 那么此事件的传播会提前终止.  
+Outbound 事件流: Context.OUT_EVT -> Connect.findContextOutbound -> nextContext.invokeOUT_EVT -> nextHandler.OUT_EVT -> nextContext.OUT_EVT   
+
+&emsp;&emsp;对于 Inbound 事件:
+* Inbound 事件是通知事件, 当某件事情已经就绪后, 通知上层.
+* Inbound 事件发起者是 unsafe
+* Inbound 事件的处理者是 Channel, 如果用户没有实现自定义的处理方法, 那么Inbound 事件默认的处理者是 TailContext, 并且其处理方法是空实现.
+* Inbound 事件在 Pipeline 中传输方向是 head -> tail
+* 在 ChannelHandler 中处理事件时, 如果这个 Handler 不是最后一个 Hnalder, 则需要调用 ctx.fireIN_EVT (例如 ctx.fireChannelActive) 将此事件继续传播下去. 如果不这样做, 那么此事件的传播会提前终止
+
+&emsp;&emsp;Outbound 事件流: Context.fireIN_EVT -> Connect.findContextInbound -> nextContext.invokeIN_EVT -> nextHandler.IN_EVT -> nextContext.fireIN_EVT
