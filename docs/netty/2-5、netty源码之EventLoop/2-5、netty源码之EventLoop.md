@@ -245,4 +245,8 @@ NioEventLoop 本身就是一个 SingleThreadEventExecutor, 因此 NioEventLoop �
     * Bootstrap.bind -> AbstractChannel#AbstractUnsafe.register 方法, 整个代码都是在主线程中运行的, 因此上面的 eventLoop.inEventLoop() 就为 false
     * 进入到 else 分支, 在这个分支中调用了 eventLoop.execute. eventLoop 是一个 NioEventLoop 的实例, 而 NioEventLoop 没有实现 execute 方法, 因此调用的是 SingleThreadEventExecutor.execute
     * 于是就调用了开始的方法startThread() 方法来启动 SingleThreadEventExecutor 内部关联的 Java 本地线程了，即当 EventLoop.execute 第一次被调用时, 就会触发 startThread() 的调用, 进而导致了 EventLoop 所对应的 Java 线程的启动
-![](NioEventLoop启动完整时序图.jpg)
+![](NioEventLoop启动完整时序图.jpg)  
+
+
+
+## 6. EventLoop启动
