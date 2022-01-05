@@ -164,8 +164,8 @@ nioserversocketchannel的过程为：
   * group().register(channel) 将 bossGroup 和 NioServerSocketChannel 关联起来
 
 * workerGroup 与 NioSocketChannel关联  
-  * init channel方法。这个方法主要做什么呢？  
-    init 方法在 ServerBootstrap 中重写了, 它为 pipeline 中添加了一个 ChannelInitializer, 而这个 ChannelInitializer 中添加了一个关键的 ServerBootstrapAcceptor handler. 
+  * init(channel)。这个方法主要做什么呢？  
+    init 方法在 ServerBootstrap 中重写了, 它为serversocketchannel的 pipeline 中添加了一个 ChannelInitializer（handler）, 而这个 ChannelInitializer 中添加了一个关键的 ServerBootstrapAcceptor handler. 
    ```
     @Override
     void init(Channel channel) throws Exception {
@@ -205,8 +205,8 @@ nioserversocketchannel的过程为：
     * ServerBootstrapAcceptor 中的 childGroup 是构造此对象是传入的 currentChildGroup即workerGroup
     * Channel 是一个 NioSocketChannel 的实例
     * childGroup.register 就是将 workerGroup 中的某个 EventLoop 和 NioSocketChannel关联
-  * ServerBootstrapAcceptor的channelRead的方法的调用   
-    一个 client 连接到 server 时, Java 底层的 NIO ServerSocketChannel 会有一个 SelectionKey.OP_ACCEPT，然后就会调用到 NioServerSocketChannel.doReadMessages  
+  * **ServerBootstrapAcceptor的channelRead的方法的调用   
+    一个 client 连接到 server 时, Java 底层的 NIO ServerSocketChannel 会有一个 SelectionKey.OP_ACCEPT，然后就会调用到 NioServerSocketChannel.doReadMessages** ，在后面的nioeventloop的io.netty.channel.nio.NioEventLoop#processSelectedKey(java.nio.channels.SelectionKey, io.netty.channel.nio.AbstractNioChannel)会触发io.netty.channel.nio.AbstractNioMessageChannel.NioMessageUnsafe的doReadMessages的执行。NioServerSocketChannel重写了doReadMessages如下：
     
     ```
     @Override
@@ -275,7 +275,7 @@ void init(Channel channel) throws Exception {
     ...
     .handler(new LoggingHandler(LogLevel.INFO))
   ```
-* 当 channel 绑定到 eventLoop 后(在这里是 NioServerSocketChannel 绑定到 bossGroup)中时, 会在 pipeline 中发出 fireChannelRegistered 事件, 接着就会触发 ChannelInitializer.initChannel 方法的调用.
+* **当 channel 绑定到 eventLoop 后(在这里是 NioServerSocketChannel 绑定到 bossGroup)中时, 会在 pipeline 中发出 fireChannelRegistered 事件, 接着就会触发 ChannelInitializer.initChannel 方法的调用.**
 * ServerBootstrapAcceptor.channelRead 中会为新建的 Channel 设置 handler 并注册到一个 eventLoop 中
   ```
     @Override

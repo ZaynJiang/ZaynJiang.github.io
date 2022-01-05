@@ -245,7 +245,7 @@ NioEventLoop 本身就是一个 SingleThreadEventExecutor, 因此 NioEventLoop �
     * Bootstrap.bind -> AbstractChannel#AbstractUnsafe.register 方法, 整个代码都是在主线程中运行的, 因此上面的 eventLoop.inEventLoop() 就为 false
     * 进入到 else 分支, 在这个分支中调用了 eventLoop.execute. eventLoop 是一个 NioEventLoop 的实例, 而 NioEventLoop 没有实现 execute 方法, 因此调用的是 SingleThreadEventExecutor.execute
     * 于是就调用了开始的方法startThread() 方法来启动 SingleThreadEventExecutor 内部关联的 Java 本地线程了，即当 EventLoop.execute 第一次被调用时, 就会触发 startThread() 的调用, 进而导致了 EventLoop 所对应的 Java 线程的启动
-![](NioEventLoop启动完整时序图.jpg)  
+  ![](NioEventLoop启动完整时序图.jpg)  
 
 
 
@@ -438,7 +438,7 @@ Bootstrap.initAndRegister ->
                     handleLoopException(e);
                     continue;
                 }
-
+  
                 cancelledKeys = 0;
                 needsToSelectAgain = false;
                 final int ioRatio = this.ioRatio;
@@ -505,7 +505,7 @@ Bootstrap.initAndRegister ->
         }
     }
   ```
-**selectNow() 方法会检查当前是否有就绪的 IO 事件, 如果有, 则返回就绪 IO 事件的个数; 如果没有, 则返回0. 注意, selectNow() 是立即返回的, 不会阻塞当前线程. 当 selectNow() 调用后, finally 语句块中会检查 wakenUp 变量是否为 true, 当为 true 时, 调用 selector.wakeup() 唤醒 select() 的阻塞调用**
+  **selectNow() 方法会检查当前是否有就绪的 IO 事件, 如果有, 则返回就绪 IO 事件的个数; 如果没有, 则返回0. 注意, selectNow() 是立即返回的, 不会阻塞当前线程. 当 selectNow() 调用后, finally 语句块中会检查 wakenUp 变量是否为 true, 当为 true 时, 调用 selector.wakeup() 唤醒 select() 的阻塞调用**
 
 * 当没有task要做的时候， 会执行private void select(boolean oldWakenUp)方法，select阻塞1s，如果有task,wakeup去做。
   ```
@@ -624,7 +624,7 @@ NioEventLoop.run 中循环的剩余部分就是处理event事件了。
             unsafe.close(unsafe.voidPromise());
             return;
         }
-
+  
         try {
             int readyOps = k.readyOps();
             // We first need to call finishConnect() before try to trigger a read(...) or write(...) as otherwise
@@ -635,16 +635,16 @@ NioEventLoop.run 中循环的剩余部分就是处理event事件了。
                 int ops = k.interestOps();
                 ops &= ~SelectionKey.OP_CONNECT;
                 k.interestOps(ops);
-
+  
                 unsafe.finishConnect();
             }
-
+  
             // Process OP_WRITE first as we may be able to write some queued buffers and so free memory.
             if ((readyOps & SelectionKey.OP_WRITE) != 0) {
                 // Call forceFlush which will also take care of clear the OP_WRITE once there is nothing left to write
                 ch.unsafe().forceFlush();
             }
-
+  
             // Also check for readOps of 0 to workaround possible JDK bug which may otherwise lead
             // to a spin loop
             //处理读请求（断开连接）或接入连接
@@ -791,7 +791,7 @@ NioEventLoop 继承于 SingleThreadEventExecutor， SingleThreadEventExecutor �
         if (task == null) {
             throw new NullPointerException("task");
         }
-
+  
         boolean inEventLoop = inEventLoop();
         if (inEventLoop) {
             addTask(task);
@@ -802,7 +802,7 @@ NioEventLoop 继承于 SingleThreadEventExecutor， SingleThreadEventExecutor �
                 reject();
             }
         }
-
+  
         if (!addTaskWakesUp && wakesUpForTask(task)) {
             wakeup(inEventLoop);
         }
@@ -912,5 +912,21 @@ NioEventLoop.run() 方法中, 在这个方法里, 会分别调用 processSelecte
             }
         }
     }
-  ```  
+  ```
   **注意：因为 EventLoop 既需要执行 IO 操作, 又需要执行 task, 因此我们在调用 EventLoop.execute 方法提交任务时, 不要提交耗时任务, 更不能提交一些会造成阻塞的任务, 不然会导致我们的 IO 线程得不到调度, 影响整个程序的并发量.**
+
+
+
+
+
+## 7. 总结
+* ServerBooststrap的initAndRegister完成server的初始化和注册：
+  * 创建了serversocketchannel实例（channelFactory.newChannel()）
+  * 为serversocketchannel添加一个ChannelInitializer的hander（init）
+  * 调用bossgroup绑定一个eventloop,并触发pipeline.fireChannelRegistered()的执行，(ChannelFuture regFuture = config().group().register(channel);)
+  * fireChannelRegistered将会调用最终第二步ChannelInitializer的initChannel方法，并给pipine绑定用户的hander，移除自身，开启一个给pipine添加ServerBootstrapAcceptor hander的任务，用于接收socketchannel与childgroup的eventloop绑定
+  * 上一步开启的任务会形成selector监听死循环任务，当有连接请求时，调用 unsafe.read()进行处理
+  * serversocketchannel持有的是NioMessageUnsafe.read()会调用serversocketchannel的doReadMessages创建socketchannel实例
+  * 接着上一步，继续执行pipeline.fireChannelRead(readBuf.get(i))，正好执行到ServerBootstrapAcceptor的channelRead方法
+  * ServerBootstrapAcceptor的channelRead方法，会进行给scocketchannel的pipline设置handler，并选取一个child的eventloop绑定socketchannel(childGroup.register(child))
+  * 上一步的注册动作会io.netty.channel.AbstractChannel.AbstractUnsafe#register0和第二步类似，最终会pipeline.fireChannelRegistered()，会触发initchannle的动作
