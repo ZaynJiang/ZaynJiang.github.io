@@ -922,7 +922,7 @@ NioEventLoop.run() 方法中, 在这个方法里, 会分别调用 processSelecte
 ## 7. 总结
 * ServerBooststrap的initAndRegister完成server的初始化和注册：
   * 创建了serversocketchannel实例（channelFactory.newChannel()）
-  * 为serversocketchannel添加一个ChannelInitializer的hander（init）
+  * 为serversocketchannel添加一个ChannelInitializer的hander（init方法）
   * 调用bossgroup绑定一个eventloop,并触发pipeline.fireChannelRegistered()的执行，(ChannelFuture regFuture = config().group().register(channel);)
   * fireChannelRegistered将会调用最终第二步ChannelInitializer的initChannel方法，并给pipine绑定用户的hander，移除自身，开启一个给pipine添加ServerBootstrapAcceptor hander的任务，用于接收socketchannel与childgroup的eventloop绑定
   * 上一步开启的任务会形成selector监听死循环任务，当有连接请求时，调用 unsafe.read()进行处理
