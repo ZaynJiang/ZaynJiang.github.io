@@ -211,7 +211,7 @@ yarn集群部署架构有四大关键点:
 * 支持native模式，tm动态申请  
 
 #### 3.3.4. per-job模式支持  
-![](yarn集群session模式.png)  
+![](yarn集群per-job模式.png)  
 * 单个JobManager独享YarnResourceManager和Dispatcher
 * Application Master 与Flink Master节点处于同一个Container
 
