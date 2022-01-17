@@ -1,7 +1,7 @@
 ## 1. 基本架构
 &emsp;&emsp;flink有这个三大基本角色：client、jobmanager、taskmanager。这三种角色相互配合完成流式计算的任务。 它们之间如何进行配合的如下图：    
 ![](flink运行基本机制.png)  
-  
+
 ### 1.1. jobmanager
 * checkpoint coordinator
 * job graph -> execution graph
@@ -81,7 +81,7 @@ session的特点为：
 * 资源根据Job需要进行申请，TM Slots数量可以不同
 * 资源相对比较浪费，JobManager需要消耗资源
 * **Job管理完全交给ClusterManagement，管理复杂**  
-![](perjobmode模式部署架构图.png)
+  ![](perjobmode模式部署架构图.png)
   
 ### 2.3. application mode特点   
 &emsp;&emsp;以上两个模式，需要客户端执行main方法，使用较多的cpu资源生成jobgraph，再耗用一定的带宽将jobgraph和依赖包上传到job manager上，这些操作在job较多的情况下性能较差。于是设计者把一部分client的工作压力交给job manager上开发出了application模式   
@@ -163,7 +163,7 @@ native部署的流程如下：
 * 将修改后的配置文件同步到每台节点的${FLINK_HOME}/conf路径下  
 
 ![](多机部署standalone.png)
-  
+
 
 注意：该模式在主节点会启动一个jobmanager，在worker节点启动taskmanger，还会启动StandaloneSessionClusterEntrypoint
 
@@ -225,11 +225,11 @@ yarn集群部署架构有四大关键点:
   https://flink.apache.org/downloads.html#additional-components
 * session集群启动:  
   * $./ bin/yarn-session.sh -jm 1024m -tm 4096m
-* Job集群启动:  
+* per-Job集群启动:  
   * #./ bin/flink run -m yarn-cluster-p 4 -yjm 1024m -ytm 4096m ./examples/batch/WordCountjar
 * Application Mode集群启动:  
   * #./ bin/flink run-application -t yarn-application l-Djobmanager.memory.process.size=2048m \-Dtaskmanager.memory.process.size=4096m \
--Dyarn.provided.lib.dirs="hdfs://node02:8020/flink-training/flink-1.11.1" \./ MyApplication.jar
+  -Dyarn.provided.lib.dirs="hdfs://node02:8020/flink-training/flink-1.11.1" \./ MyApplication.jar
 
 
 
