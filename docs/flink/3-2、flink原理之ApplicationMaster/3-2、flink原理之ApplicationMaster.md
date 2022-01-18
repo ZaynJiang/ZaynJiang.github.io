@@ -155,8 +155,273 @@ dispatcher是集群的主要组件，它的主要功能为：
         completeDispatcherSetup(dispatcherService);
     }
   ```
+* dispatcher的submitjob会接收提交的任务 
+  ```
+     public CompletableFuture<Acknowledge> submitJob(JobGraph jobGraph, Time timeout) {
+        log.info("Received JobGraph submission {} ({}).", jobGraph.getJobID(), jobGraph.getName());
+        try {
+            if (isDuplicateJob(jobGraph.getJobID())) {
+                final DuplicateJobSubmissionException exception =
+                        isInGloballyTerminalState(jobGraph.getJobID())
+                                ? DuplicateJobSubmissionException.ofGloballyTerminated(
+                                        jobGraph.getJobID())
+                                : DuplicateJobSubmissionException.of(jobGraph.getJobID());
+                return FutureUtils.completedExceptionally(exception);
+            } else if (isPartialResourceConfigured(jobGraph)) {
+                return FutureUtils.completedExceptionally(
+                        new JobSubmissionException(
+                                jobGraph.getJobID(),
+                                "Currently jobs is not supported if parts of the vertices have "
+                                        + "resources configured. The limitation will be removed in future versions."));
+            } else {
+                return internalSubmitJob(jobGraph);
+            }
+        } catch (FlinkException e) {
+            return FutureUtils.completedExceptionally(e);
+        }
+    }
+  ```
+* 持久化和运行job
+  ```
+  
+    private void persistAndRunJob(JobGraph jobGraph) throws Exception {
+        jobGraphWriter.putJobGraph(jobGraph); //持久化job
+        runJob(jobGraph, ExecutionType.SUBMISSION);//运行
+    }
+  ```
+* 创建job manager并启动
+  ```
+      private void runJob(JobGraph jobGraph, ExecutionType executionType) throws Exception {
+        Preconditions.checkState(!runningJobs.containsKey(jobGraph.getJobID()));
+        long initializationTimestamp = System.currentTimeMillis();
+        JobManagerRunner jobManagerRunner =
+                createJobManagerRunner(jobGraph, initializationTimestamp);
+  ```
+  ```
+      JobManagerRunner createJobManagerRunner(JobGraph jobGraph, long initializationTimestamp)
+            throws Exception {
+        final RpcService rpcService = getRpcService();
+
+        JobManagerRunner runner =
+                jobManagerRunnerFactory.createJobManagerRunner(
+                        jobGraph,
+                        configuration,
+                        rpcService,
+                        highAvailabilityServices,
+                        heartbeatServices,
+                        jobManagerSharedServices,
+                        new DefaultJobManagerJobMetricGroupFactory(jobManagerMetricGroup),
+                        fatalErrorHandler,
+                        initializationTimestamp);
+        runner.start(); //启动job manager
+        return runner;
+    }
+  ```
 具体的流程如：  
 ![](dispatcher接受job.png)  
 
 ### 3.3. dispatcher核心成员
-![](dispatcher核心组件.png)
+![](dispatcher核心组件.png)  
+
+
+
+## 4. resourcemanager组件  
+![](resourcemanager流程图.png)    
+### 4.1. resourcemanager启动
+* 和dispatcher的启动入口类似
+```
+private void runCluster(Configuration configuration, PluginManager pluginManager)
+        throws Exception {
+synchronized (lock) {
+        initializeServices(configuration, pluginManager);
+
+        // write host information into configuration
+        configuration.setString(JobManagerOptions.ADDRESS, commonRpcService.getAddress());
+        configuration.setInteger(JobManagerOptions.PORT, commonRpcService.getPort());
+
+        final DispatcherResourceManagerComponentFactory
+                dispatcherResourceManagerComponentFactory =
+                        createDispatcherResourceManagerComponentFactory(configuration);
+}
+```  
+
+* 开启resourcemanager
+  ```
+      private void startNewLeaderResourceManager(UUID newLeaderSessionID) throws Exception {
+        stopLeaderResourceManager();
+
+        this.leaderSessionID = newLeaderSessionID;
+        this.leaderResourceManager =
+                resourceManagerFactory.createResourceManager(
+                        rmProcessContext, newLeaderSessionID, ResourceID.generate());
+
+        final ResourceManager<?> newLeaderResourceManager = this.leaderResourceManager;
+
+        previousResourceManagerTerminationFuture
+                .thenComposeAsync(
+                        (ignore) -> {
+                            synchronized (lock) {
+                                return startResourceManagerIfIsLeader(newLeaderResourceManager);
+                            }
+                        },
+                        handleLeaderEventExecutor)
+                .thenAcceptAsync(
+                        (isStillLeader) -> {
+                            if (isStillLeader) {
+                                leaderElectionService.confirmLeadership(
+                                        newLeaderSessionID, newLeaderResourceManager.getAddress());
+                            }
+                        },
+                        ioExecutor);
+    }
+  ```
+
+
+### 4.2. resourcemanager资源分配  
+* activemanager接收newwork请求
+* 资源信息封装到WorkerResourceSpec  
+  ```
+  
+    private final CPUResource cpuCores;
+
+    private final MemorySize taskHeapSize;
+
+    private final MemorySize taskOffHeapSize;
+
+    private final MemorySize networkMemSize;
+
+    private final MemorySize managedMemSize;
+
+    private final int numSlots;
+
+    private final Map<String, ExternalResource> extendedResources;
+  ```
+* processSpecFromWorkerResourceSpec来封装TaskExecutorProcessSpec  
+  ```
+        * <pre>
+        *               ┌ ─ ─ Total Process Memory  ─ ─ ┐
+        *                ┌ ─ ─ Total Flink Memory  ─ ─ ┐
+        *               │ ┌───────────────────────────┐ │
+        *                ││   Framework Heap Memory   ││  ─┐
+        *               │ └───────────────────────────┘ │  │
+        *               │ ┌───────────────────────────┐ │  │
+        *            ┌─  ││ Framework Off-Heap Memory ││   ├─ On-Heap
+        *            │  │ └───────────────────────────┘ │  │
+        *            │   │┌───────────────────────────┐│   │
+        *            │  │ │     Task Heap Memory      │ │ ─┘
+        *            │   │└───────────────────────────┘│
+        *            │  │ ┌───────────────────────────┐ │
+        *            ├─  ││   Task Off-Heap Memory    ││
+        *            │  │ └───────────────────────────┘ │
+        *            │   │┌───────────────────────────┐│
+        *            ├─ │ │      Network Memory       │ │
+        *            │   │└───────────────────────────┘│
+        *            │  │ ┌───────────────────────────┐ │
+        *  Off-Heap ─┼─   │      Managed Memory       │
+        *            │  ││└───────────────────────────┘││
+        *            │   └ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘
+        *            │  │┌─────────────────────────────┐│
+        *            ├─  │        JVM Metaspace        │
+        *            │  │└─────────────────────────────┘│
+        *            │   ┌─────────────────────────────┐
+        *            └─ ││        JVM Overhead         ││
+        *                └─────────────────────────────┘
+        *               └ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘
+        * </pre>
+        */
+        public class TaskExecutorProcessSpec extends CommonProcessMemorySpec<TaskExecutorFlinkMemory> {
+  ```
+* YarnResourceManagerDriver#requestResource来申请资源
+* 
+
+## 5. graph
+我们知道flink的客户端完成了stream graph -> job graph，然后提交到了dispatch后，会完成job graph -> excution graph -> 物理执行图
+![](flink-graph转换图.png)  
+
+### 5.1. flink graph转换
+![](flink-graph转换图详细.png)  
+
+#### 5.1.1. program->stream graph
+![](program转换streamgraph.png)    
+通过图片可以知道，它是将代码拆分成算子，然后用stream将它们连接起来。   
+![](program转换streamgraph2.png)    
+
+* 执行应用的execute方法
+* 获取stream graph
+  ```
+      public JobExecutionResult execute(String jobName) throws Exception {
+        Preconditions.checkNotNull(jobName, "Streaming Job name should not be null.");
+        return this.execute(this.getStreamGraph(jobName));
+    }
+  ```
+* StreamExecutionEnvironment持有Transformation数组
+* 我们在使用各种flink的api的时候，实际上那些api会调用这个方法将算子添加到Transformation数组
+  ```
+  	public void addOperator(Transformation<?> transformation) {
+		Preconditions.checkNotNull(transformation, "transformation must not be null.");
+		this.transformations.add(transformation);
+	}
+  ```
+  
+
+* StreamGraphGenerator生成graph的时候遍历进行生成graph
+  ```
+  	Collection<Integer> transformedIds;
+		if (transform instanceof OneInputTransformation<?, ?>) {
+			transformedIds = transformOneInputTransform((OneInputTransformation<?, ?>) transform);
+		} else if (transform instanceof TwoInputTransformation<?, ?, ?>) {
+
+                        ......................
+
+
+  ```
+* 上一步会将算子的信息放入到StreamGraph对象之中，如：
+  ```
+  	private <T> Collection<Integer> transformPartition(PartitionTransformation<T> partition) {
+		Transformation<T> input = partition.getInput();
+		List<Integer> resultIds = new ArrayList<>();
+
+		Collection<Integer> transformedIds = transform(input);
+		for (Integer transformedId: transformedIds) {
+			int virtualId = Transformation.getNewNodeId();
+			streamGraph.addVirtualPartitionNode(
+					transformedId, virtualId, partition.getPartitioner(), partition.getShuffleMode());
+			resultIds.add(virtualId);
+		}
+
+		return resultIds;
+	}
+  ``` 
+
+* 最终会生成完整的streamgraph  
+
+
+  
+具体的streamgraph组成为：  
+![](stream-graph组成.png)  
+
+#### 5.1.2. stream graph -> job graph
+![](streamgraph转换到jobgraph.png)  
+  
+* streamgraph的getjobGraph会将streamgraph生成jobgraph
+  ```
+        public JobGraph getJobGraph(@Nullable JobID jobID) {
+                return StreamingJobGraphGenerator.createJobGraph(this, jobID);
+        }
+  ```
+* 最终是由StreamingJobGraphGenerator来生成的  
+    
+
+jobgraph的核心成员为：  
+![](jobgraph的核心成员.png) 
+
+
+#### 5.1.3. job graph  -> executiongraph    
+![](jobgraph到executiongraph关系.png)  
+![](executiongraph组成.png)     
+
+
+#### 5.1.4. execution graph -> 物理执行图
+![](物理执行图转换.png)  
+
+
