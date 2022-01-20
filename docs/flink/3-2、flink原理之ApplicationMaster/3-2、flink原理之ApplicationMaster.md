@@ -277,7 +277,19 @@ synchronized (lock) {
   ```
 
 
-### 4.2. resourcemanager资源分配  
+### 4.2. resourcemanager资源分配
+#### 4.2.1. resourcemanager资源类型   
+resourcemanager管理的资源主要类型有：  
+* 内存
+* cpu
+* 其它拓展资源（gpu）  
+
+分配的时候主要就分配这些资源
+
+#### 4.2.2. taskMananger资源
+
+#### 4.2.2. taskMananger资源
+其流程为：
 * activemanager接收newwork请求
 * 资源信息封装到WorkerResourceSpec  
   ```
@@ -332,7 +344,9 @@ synchronized (lock) {
         public class TaskExecutorProcessSpec extends CommonProcessMemorySpec<TaskExecutorFlinkMemory> {
   ```
 * YarnResourceManagerDriver#requestResource来申请资源
-* 
+
+
+### 4.3. resourcemanager资源分配
 
 ## 5. graph
 我们知道flink的客户端完成了stream graph -> job graph，然后提交到了dispatch后，会完成job graph -> excution graph -> 物理执行图
