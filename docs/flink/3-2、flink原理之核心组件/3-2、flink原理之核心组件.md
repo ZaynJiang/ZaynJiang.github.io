@@ -2,9 +2,10 @@
 
 
 ## 2. applicationMaster的启动
-* 当我们使用yarn-session启动集群时会向resourceManagement发起请求。  
+* 当我们使用yarn-session启动集群时会向resourceManagement（yarn的资源管理器）发起请求。  
   会调用appMaster:org.apache.flink.yarn.YarnClusterDescriptor#startAppMaster方法启动  
-  该方法也会用于提交jobgraph（应该是per-job模式，会同时启动集群和提交job）
+  该方法也会用于提交jobgraph（即per-job模式，会同时启动集群和提交job）
+  
   ```
       private ApplicationReport startAppMaster(
             Configuration configuration,
@@ -16,7 +17,7 @@
             ClusterSpecification clusterSpecification)
             throws Exception {
   ```
-
+  
 * hadoop会创建容器启动org.apache.flink.yarn.entrypoint.YarnJobClusterEntrypoint#main的方法
 * 上述的方法会执行ClusterEntrypoint.runClusterEntrypoint(yarnJobClusterEntrypoint);
 * 接着调用org.apache.flink.runtime.entrypoint.ClusterEntrypoint#startCluster启动集群
@@ -26,15 +27,15 @@
             throws Exception {
         synchronized (lock) {
             initializeServices(configuration, pluginManager);
-
+  
             // write host information into configuration
             configuration.setString(JobManagerOptions.ADDRESS, commonRpcService.getAddress());
             configuration.setInteger(JobManagerOptions.PORT, commonRpcService.getPort());
-
+  
             final DispatcherResourceManagerComponentFactory
                     dispatcherResourceManagerComponentFactory =
                             createDispatcherResourceManagerComponentFactory(configuration);
-
+  
             clusterComponent =
                     dispatcherResourceManagerComponentFactory.create(
                             configuration,
@@ -48,7 +49,7 @@
                             new RpcMetricQueryServiceRetriever(
                                     metricRegistry.getMetricQueryServiceRpcService()),
                             this);
-
+  
             clusterComponent
                     .getShutDownFuture()
                     .whenComplete(
@@ -65,7 +66,7 @@
                             });
         }
     }
-  ``` 
+  ```
 
 
 
@@ -120,7 +121,7 @@ dispatcher是集群的主要组件，它的主要功能为：
 
         leaderElectionService.start(dispatcherRunner);
     }
-```  
+```
 
 ```
     public void grantLeadership(UUID leaderSessionID) {
@@ -151,7 +152,7 @@ dispatcher是集群的主要组件，它的主要功能为：
                         DispatcherId.fromUuid(getLeaderSessionId()),
                         Collections.singleton(jobGraph),
                         ThrowingJobGraphWriter.INSTANCE);
-
+  
         completeDispatcherSetup(dispatcherService);
     }
   ```
@@ -201,7 +202,7 @@ dispatcher是集群的主要组件，它的主要功能为：
       JobManagerRunner createJobManagerRunner(JobGraph jobGraph, long initializationTimestamp)
             throws Exception {
         final RpcService rpcService = getRpcService();
-
+  
         JobManagerRunner runner =
                 jobManagerRunnerFactory.createJobManagerRunner(
                         jobGraph,
@@ -217,15 +218,18 @@ dispatcher是集群的主要组件，它的主要功能为：
         return runner;
     }
   ```
-具体的流程如：  
-![](dispatcher接受job.png)  
+  具体的流程如：  
+  ![](dispatcher接受job.png)  
 
 ### 3.3. dispatcher核心成员
 ![](dispatcher核心组件.png)  
 
 
 
-## 4. resourcemanager组件  
+## 4. resourcemanager组件   
+
+resoucemanager负责集群资源的管理 
+
 ![](resourcemanager流程图.png)    
 ### 4.1. resourcemanager启动
 * 和dispatcher的启动入口类似
@@ -243,20 +247,20 @@ synchronized (lock) {
                 dispatcherResourceManagerComponentFactory =
                         createDispatcherResourceManagerComponentFactory(configuration);
 }
-```  
+```
 
 * 开启resourcemanager
   ```
       private void startNewLeaderResourceManager(UUID newLeaderSessionID) throws Exception {
         stopLeaderResourceManager();
-
+  
         this.leaderSessionID = newLeaderSessionID;
         this.leaderResourceManager =
                 resourceManagerFactory.createResourceManager(
                         rmProcessContext, newLeaderSessionID, ResourceID.generate());
-
+  
         final ResourceManager<?> newLeaderResourceManager = this.leaderResourceManager;
-
+  
         previousResourceManagerTerminationFuture
                 .thenComposeAsync(
                         (ignore) -> {
@@ -278,34 +282,41 @@ synchronized (lock) {
 
 
 ### 4.2. resourcemanager资源分配
-#### 4.2.1. resourcemanager资源类型   
+#### 4.2.1. resourcemanager资源 
+![](task-manager的slot资源.png)  
+* TM有固定数量的Slot资源
+* Slot数量由配置决定
+* Slot资源由TM资源及Slot数量决定
+* 同一TM上的Slot之间无差别  
+
+#### 4.2.2. taskMananger资源类型
 resourcemanager管理的资源主要类型有：  
 * 内存
 * cpu
 * 其它拓展资源（gpu）  
 
-分配的时候主要就分配这些资源
+分配的时候主要就分配这些资源。  
+内存资源的类型如下：   
+![](taskmanager的内存资源.png)  
 
-#### 4.2.2. taskMananger资源
-
-#### 4.2.2. taskMananger资源
+#### 4.2.3. resourcemanager申请资源流程
 其流程为：
 * activemanager接收newwork请求
 * 资源信息封装到WorkerResourceSpec  
   ```
   
     private final CPUResource cpuCores;
-
+  
     private final MemorySize taskHeapSize;
-
+  
     private final MemorySize taskOffHeapSize;
-
+  
     private final MemorySize networkMemSize;
-
+  
     private final MemorySize managedMemSize;
-
+  
     private final int numSlots;
-
+  
     private final Map<String, ExternalResource> extendedResources;
   ```
 * processSpecFromWorkerResourceSpec来封装TaskExecutorProcessSpec  
@@ -347,95 +358,22 @@ resourcemanager管理的资源主要类型有：
 
 
 ### 4.3. resourcemanager资源分配
+在上面的资源申请流程中，activemanager会充当taskmanager的管理工作。 其实taskmanager的管理有两大类：  
+* Standalone部署模式
+* ActiveResourceManager部署模式
+  * Kubernetes,Yarn,Mesos
+  * Slot数量按需分配，根据Slot Request请求数量启动TaskManager.
+  * TaskManager空闲一段时间后，超时释放
+  * On-Yarn部署模式不再支持固定数量的TaskManager   
 
-## 5. graph
-我们知道flink的客户端完成了stream graph -> job graph，然后提交到了dispatch后，会完成job graph -> excution graph -> 物理执行图
-![](flink-graph转换图.png)  
-
-### 5.1. flink graph转换
-![](flink-graph转换图详细.png)  
-
-#### 5.1.1. program->stream graph
-![](program转换streamgraph.png)    
-通过图片可以知道，它是将代码拆分成算子，然后用stream将它们连接起来。   
-![](program转换streamgraph2.png)    
-
-* 执行应用的execute方法
-* 获取stream graph
-  ```
-      public JobExecutionResult execute(String jobName) throws Exception {
-        Preconditions.checkNotNull(jobName, "Streaming Job name should not be null.");
-        return this.execute(this.getStreamGraph(jobName));
-    }
-  ```
-* StreamExecutionEnvironment持有Transformation数组
-* 我们在使用各种flink的api的时候，实际上那些api会调用这个方法将算子添加到Transformation数组
-  ```
-  	public void addOperator(Transformation<?> transformation) {
-		Preconditions.checkNotNull(transformation, "transformation must not be null.");
-		this.transformations.add(transformation);
-	}
-  ```
+### 4.4. taskmanager的task调度图
+![](taskmanager调度整体流程图.png)  
+* SlotRequest
+  * task + slot -> allocate taskslot
+* slot sharing
+  * slot sharing group任务共享slot计算资源
+  * 单个slots中相同任务只能有一个。    
   
 
-* StreamGraphGenerator生成graph的时候遍历进行生成graph
-  ```
-  	Collection<Integer> transformedIds;
-		if (transform instanceof OneInputTransformation<?, ?>) {
-			transformedIds = transformOneInputTransform((OneInputTransformation<?, ?>) transform);
-		} else if (transform instanceof TwoInputTransformation<?, ?, ?>) {
-
-                        ......................
-
-
-  ```
-* 上一步会将算子的信息放入到StreamGraph对象之中，如：
-  ```
-  	private <T> Collection<Integer> transformPartition(PartitionTransformation<T> partition) {
-		Transformation<T> input = partition.getInput();
-		List<Integer> resultIds = new ArrayList<>();
-
-		Collection<Integer> transformedIds = transform(input);
-		for (Integer transformedId: transformedIds) {
-			int virtualId = Transformation.getNewNodeId();
-			streamGraph.addVirtualPartitionNode(
-					transformedId, virtualId, partition.getPartitioner(), partition.getShuffleMode());
-			resultIds.add(virtualId);
-		}
-
-		return resultIds;
-	}
-  ``` 
-
-* 最终会生成完整的streamgraph  
-
-
-  
-具体的streamgraph组成为：  
-![](stream-graph组成.png)  
-
-#### 5.1.2. stream graph -> job graph
-![](streamgraph转换到jobgraph.png)  
-  
-* streamgraph的getjobGraph会将streamgraph生成jobgraph
-  ```
-        public JobGraph getJobGraph(@Nullable JobID jobID) {
-                return StreamingJobGraphGenerator.createJobGraph(this, jobID);
-        }
-  ```
-* 最终是由StreamingJobGraphGenerator来生成的  
-    
-
-jobgraph的核心成员为：  
-![](jobgraph的核心成员.png) 
-
-
-#### 5.1.3. job graph  -> executiongraph    
-![](jobgraph到executiongraph关系.png)  
-![](executiongraph组成.png)     
-
-
-#### 5.1.4. execution graph -> 物理执行图
-![](物理执行图转换.png)  
-
+![](task在slot资源分布.png)
 
