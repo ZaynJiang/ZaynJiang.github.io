@@ -94,4 +94,67 @@ streamA.join(streamB)
 ### 3.3.6. flink的系统类型  
 
 
-## 4. flink中的状态计算  
+## 4. flink中的状态计算    
+&emsp;&emsp;一些其它的流式计算需要将计算节点的数据存储在数据库中，其中会占用一定的io，而如果不将数据持久化，则系统将不能容错。而flink是怎么做的呢？答案是checkpoint，不过我们先了解下flink的状态  
+&emsp;&emsp;传统的流计算架构:  
+![](传统流式框架1.png)    
+![](传统流式框架2.png)    
+
+### 4.1. Flink状态分类  
+![](flink状态的分类.png)  
+
+
+#### 4.1.1. Keyed State  
+只能用于keyedstream的operator上，每个key对应一个state
+类型：
+* ValueState
+* ListState
+* ReduceState
+* MapState
+* AggregatingState  
+使用方式：
+实现RichFunction接口
+
+#### 4.1.2. Operator state  
+不区分key，需要重新分布，一个operator一个这样的状态，一般用于source或者sink上，比如可以做buffersink。
+类型：
+* ListState
+* UnionListState
+* BroadcastState
+使用方式：
+实现CheckpointedFunction接口  
+
+### 4.2. Flink状态持久化  
+#### 4.2.1. checkpoint  
+通过jobmanager来定时发起checkpoint  
+* checkpoint coordinator向source发起trigger checkpoint
+* source异步将自己的数据写入到持久化，并发起barrier事件给下游
+* 下游收到事件后，会将状态快照，异步持久化，并继续发起barrier事件给下游
+* 持久化完成后会将持久化后的数据地址发给checkpoint coordinator
+* 当所有的节点都完成持久化了，整个checkpoint就完成了  
+![](checkpoint1.png)
+barier会有一个对齐的操作，会阻塞正常数据处理  
+1.11版本之后进行了优化，在持久化的时候会进行脏数据合并的操作。  
+![](checkpoint2.png)  
+可以设置Checkpointmode；至少一次和精准1次，精准一次会有barrier对齐，导致性能阻塞，至少一次不对齐则可能恢复的时候有重复数据。  
+还有一些其它的参数可查看资料。  
+
+
+#### 4.2.2. savepoint    
+Savepoint  
+
+
+#### 4.2.3.Statebackend
+有三种模式：
+* 纯内存模式
+* 文件模式
+* Rocksdb    
+
+这几种模式分别有什么特点  
+
+
+#### 4.2.4. 状态恢复和升级
+注意点
+
+#### 4.2.5.状态的序列化
+
