@@ -101,7 +101,9 @@ streamA.join(streamB)
 ![](传统流式框架2.png)    
 
 ### 4.1. Flink状态分类  
-![](flink状态的分类.png)  
+![](flink状态的分类.png)      
+![](datastream状态对比.png)  
+
 
 
 #### 4.1.1. Keyed State  
@@ -115,14 +117,137 @@ streamA.join(streamB)
 使用方式：
 实现RichFunction接口
 
-#### 4.1.2. Operator state  
-不区分key，需要重新分布，一个operator一个这样的状态，一般用于source或者sink上，比如可以做buffersink。
+#### 4.1.2. Operator state   
+其特点：  
+* 单operator具有一个状态，不区分key
+* state需要重新分布
+* 一个operator一个这样的状态，一般用于source或者sink上
+* 比如可以做buffersink。
+* 比如用于维护kafkaconsumer中的位移
 类型：
 * ListState
 * UnionListState
 * BroadcastState
-使用方式：
-实现CheckpointedFunction接口  
+使用方式：  
+* 实现CheckpointedFunction接口  
+* 实现 ListCheckpointed 接口定义 (Deprecated)  
+
+一个Operator state实现buffersink的案例：
+```
+public class BufferingSinkExample {
+    public static void main(String[] args) {
+
+    }
+}
+
+class BufferingSinkFunction
+        implements SinkFunction<Tuple2<String, Integer>>,
+        CheckpointedFunction {
+
+    private final int threshold;
+
+    private transient ListState<Tuple2<String, Integer>> checkpointedState;
+
+    private List<Tuple2<String, Integer>> bufferedElements;
+
+    public BufferingSinkFunction(int threshold) {
+        this.threshold = threshold;
+        this.bufferedElements = new ArrayList<>();
+    }
+
+    @Override
+    public void invoke(Tuple2<String, Integer> value, Context contex) throws Exception {
+        bufferedElements.add(value);
+        if (bufferedElements.size() == threshold) {
+            for (Tuple2<String, Integer> element : bufferedElements) {
+                // send it to the sink
+            }
+            bufferedElements.clear();
+        }
+    }
+
+    @Override
+    public void snapshotState(FunctionSnapshotContext context) throws Exception {
+        checkpointedState.clear();
+        for (Tuple2<String, Integer> element : bufferedElements) {
+            checkpointedState.add(element);
+        }
+    }
+
+    @Override
+    public void initializeState(FunctionInitializationContext context) throws Exception {
+        ListStateDescriptor<Tuple2<String, Integer>> descriptor =
+                new ListStateDescriptor<>(
+                        "buffered-elements",
+                        TypeInformation.of(new TypeHint<Tuple2<String, Integer>>() {
+                        }));
+
+        checkpointedState = context.getOperatorStateStore().getListState(descriptor);
+
+        if (context.isRestored()) {
+            for (Tuple2<String, Integer> element : checkpointedState.get()) {
+                bufferedElements.add(element);
+            }
+        }
+    }
+}
+```
+
+#### 4.1.3. Broadcast State    
+
+##### 4.1.3.1. 特点
+* Broadcast State 使得 Flink 用户能够以容错、一致、可扩缩容地将来自广播的低吞吐的事
+件流数据存储下来，被广播到某个 operator 的所有并发实例中，然后与另一条流数据连接
+进行计算。
+* 广播状态与其它的operator state 之间有三个主要区别它的
+  * Map 格式类型
+  * 需要有一条广播的输入流
+  * operator 可以有多个不同名称的广播状态
+
+##### 4.1.3.2. Broadcast 应用场景  
+* 动态规则：
+  * 动态规则是一条事件流，要求吞吐量不能太高。例如，当一个报警规则时触发报警信息等，将规
+则广播到算子的所有并发实例中；
+* 数据丰富：
+  * 例如，将用户的详细信息作业广播状态进行广播，对包含用户 ID 的交易数据流进行数据丰富；
+
+##### 4.1.3.3. Broadcast使用注意事项
+* 同一个 operator 的各个 task 之间没有通信，广播流侧（processBroadcastElement）可
+以能修改 broadcast state，而数据流侧（processElement）只能读 broadcast state.；
+* 需要保证所有 Operator task 对 broadcast state 的修改逻辑是相同的，否则会导致非预期
+的结果；
+* Operator tasks 之间收到的广播流元素的顺序可能不同：虽然所有元素最终都会下发给下游
+tasks，但是元素到达的顺序可能不同，所以更新state时不能依赖元素到达的顺序；
+* 每个 task 对各自的 Broadcast state 都会做快照，防止热点问题；
+* 目前不支持 RocksDB 保存 Broadcast state：Broadcast state 目前只保存在内存中，需要
+为其预留合适的内存；
+
+##### 4.1.3.4. Broadcast案例  
+```
+DataStream<Action> actions = env.addSource(new KafkaConsumer<>());
+DataStream<Pattern> patterns = env.addSource(new KafkaConsumer<>());
+KeyedStream<Action, Long> actionsByUser = actions
+.keyBy((KeySelector<Action, Long>) action -> action.userId);
+MapStateDescriptor<Void, Pattern> bcStateDescriptor =
+new MapStateDescriptor<>("patterns", Types.VOID, Types.POJO(Pattern.class));
+BroadcastStream<Pattern> bcedPatterns = patterns.broadcast(bcStateDescriptor);
+DataStream<Tuple2<Long, Pattern>> matches = actionsByUser
+.connect(bcedPatterns)
+.process(new PatternEvaluator());
+```
+
+```
+public abstract class BroadcastProcessFunction<IN1, IN2, OUT> extends
+  BaseBroadcastProcessFunction {
+  public abstract void processElement(IN1 value, ReadOnlyContext ctx, Collector<OUT> out) throws Exception;
+  public abstract void processBroadcastElement(IN2 value, Context ctx, Collector<OUT> out) throws Exception;
+}
+public abstract class KeyedBroadcastProcessFunction<KS, IN1, IN2, OUT> {
+  public abstract void processElement(IN1 value, ReadOnlyContext ctx, Collector<OUT> out) throws Exception;
+  public abstract void processBroadcastElement(IN2 value, Context ctx, Collector<OUT> out) throws Exception;
+  public void onTimer(long timestamp, OnTimerContext ctx, Collector<OUT> out) throws Exception;
+}
+```
 
 ### 4.2. Flink状态持久化  
 #### 4.2.1. checkpoint  
