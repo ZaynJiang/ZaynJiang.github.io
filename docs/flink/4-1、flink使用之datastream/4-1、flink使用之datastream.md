@@ -31,14 +31,27 @@ datastream的使用主要分为如下的关键：
 
 ### 3.3. DataStream转换的操作
 数据流的操作可以分为，单个流转换，多个流的窗口操作，多个流的合并，单流拆分操作  
-![](datastream转换.png)    
+![](datastream转换.png)      
+![](datastream的转换.png)  
+
 ### 3.3.1. Watermark
 * 1) 定义
 * 2) 使用  
-    两种方式：  
-    * Periodic Watermarks
-    * Punctuated Watermarks
-* 3) 总结
+  两种方式：  
+  * Periodic Watermarks
+  * Punctuated Watermarks
+* 3) 总结  
+*  Watermark = Max EventTime – Late
+Threshold
+   * Late Threshold 越高，数据处理延时越高
+   * 启发式更新
+   * 解决一定范围内的乱序事件
+   * 窗口触发条件：Current Watermark >
+   Window EndTime
+   * Watermark 的主要目的是告诉窗口不再会
+   有比当前 Watermark 更晚的数据到达
+   * Idel Watermark 仅会发生在顺序事件中  
+   ![](watermark的时间曲线.png)
 
 ### 3.3.2. 窗口计算
 * 窗口计算可分为keyed窗口计算和nonekeyd窗口计算
@@ -259,17 +272,63 @@ public abstract class KeyedBroadcastProcessFunction<KS, IN1, IN2, OUT> {
 * 当所有的节点都完成持久化了，整个checkpoint就完成了  
 ![](checkpoint1.png)
 barier会有一个对齐的操作，会阻塞正常数据处理  
-1.11版本之后进行了优化，在持久化的时候会进行脏数据合并的操作。  
+1.11版本之后进行了优化，在持久化的时候会进行脏数据合并的操作，这样不会阻塞等待，还不完善。  
 ![](checkpoint2.png)  
 可以设置Checkpointmode；至少一次和精准1次，精准一次会有barrier对齐，导致性能阻塞，至少一次不对齐则可能恢复的时候有重复数据。  
 还有一些其它的参数可查看资料。  
 
+##### 4.2.1.1. 代码示例   
+```
+// 指定Checkpoint间隔时间
+• StreamExecutionEnvironment enableCheckpointing(long interval)
+// 指定Checkpoint间隔时间以及CheckpointingMode(EXACTLY_ONCE ,AT_LEAST_ONCE)
+• StreamExecutionEnvironment enableCheckpointing(long interval, CheckpointingMode mode)
+// 指定是否强制在迭代作业中执行Checkpoint（@Deprecated ）
+• StreamExecutionEnvironment enableCheckpointing(long interval, CheckpointingMode mode, boolean force)
+// 默认Checkpoint Interval 为500 ms （@Deprecated ）
+• StreamExecutionEnvironment enableCheckpointing()
+```
 
-#### 4.2.2. savepoint    
-Savepoint  
 
+#### 4.2.2. savepoint     
+#### 4.2.2.1. checkpoint和savepoint对比     
+![](flink的checkpoint和savepoint对比.png)  
+#### 4.2.2.2. savepoint 客户端命令   
+• Trigger a Savepoint
+$ bin/flink savepoint :jobId [:targetDirectory]
+• Trigger a Savepoint with YARN
+$ bin/flink savepoint :jobId [:targetDirectory] -yid :yarnAppId
+• Cancel Job with Savepoint
+$ bin/flink cancel -s [:targetDirectory] :jobId
+• Resuming from Savepoints
+$ bin/flink run -s :savepointPath [:runArgs]
+• Allowing Non-Restored State
+$ bin/flink run -s :savepointPath -n [:runArgs]
+• Disposing Savepoints
+$ bin/flink savepoint -d :savepointPath  
 
-#### 4.2.3.Statebackend
+#### 4.2.2.3. Savepoint 默认路径配置
+• 在$FLINK_HOME/conf/flink-conf.yaml文件中配置如下：
+# Default savepoint target directory
+state.savepoints.dir: hdfs:///flink/savepoints
+  
+#### 4.2.2.4. Savepoint 路径格式  
+```
+# Savepoint target directory
+/savepoints/
+# Savepoint directory
+/savepoints/savepoint-:shortjobid-:savepointid/
+# Savepoint file contains the checkpoint meta data
+/savepoints/savepoint-:shortjobid-:savepointid/_metadata
+# Savepoint state
+/savepoints/savepoint-:shortjobid-:savepointid/...
+```
+
+#### 4.2.2.5. 注意事项  
+设置一个uid，用于从指定savepoint中恢复，兼容性恢复。    
+![](savepoint指定uid.png)  
+
+#### 4.2.3. Statebackend
 有三种模式：
 * 纯内存模式
 * 文件模式
