@@ -7,7 +7,7 @@ CAT系统原型和理念来源于eBay的CAL的系统， CAT系统第一代设计
 * 告警机制
 
 ## 2. 功能介绍  
-参考（http://10.130.36.237:8080/cat/r）  
+参考（报表后台）  
 * Transaction
 * Event
 * Heartbeat
