@@ -340,5 +340,119 @@ state.savepoints.dir: hdfs:///flink/savepoints
 #### 4.2.4. 状态恢复和升级
 注意点
 
-#### 4.2.5.状态的序列化
+#### 4.2.5. 状态的序列化
+状态的序列化可以in base heap和 in off heap
+* base heap  
+  ![](datastream基于堆的序列化.png)
+* off heap     
+  ![](datastream基于非堆的序列化.png)  
 
+
+#### 4.2.6. Querable State  
+#### 4.2.6.1. Queryable State 整体架构  
+  ![](querystate整体架构.png)  
+* Queryable State 集群配置  
+  * 启用Queryable State服务  
+    在${FLINK_HOME}/conf/flink-conf.yaml中设置queryable-state.enable: true
+  * 添加依赖到Flink集群lib  
+    cp ${FLINK_HOME}/opt/flink-queryable-state-runtime_2.11-1.11.0.jar ${FLINK_HOME}/lib/
+  * 重启Flink集群，查看TaskManager日志
+    * Started Queryable State Server @ /x.x.x.x:9067.
+    * Started Queryable State Proxy Server @ /x.x.x.x:9069
+#### 4.2.6.2. 可查询状态任务配置  
+可查询状态配置方式有两种：
+* 将KeyedStream转换为QueryableStateStream:  
+  ```
+  // ValueState
+  QueryableStateStream asQueryableState( String queryableStateName, ValueStateDescriptor stateDescriptor)
+  // ReducingState
+  QueryableStateStream asQueryableState( String queryableStateName, ReducingStateDescriptor stateDescriptor)
+  ```
+ 
+* 通过状态描述StateDescriptor的setQueryable(String queryableStateName)方法: 
+  ```
+    ValueStateDescriptor<Tuple2<Long, Long>> descriptor = new ValueStateDescriptor<>(
+      "average", // the state name
+    TypeInformation.of(new TypeHint<Tuple2<Long, Long>>() {})); // type information
+    descriptor.setQueryable("query-name"); // queryable state name
+  ```
+
+#### 4.2.6.3. Queryable State 客户端配置  
+* 在客户端项目中引入如下Maven依赖配置：
+ ```
+<dependency>
+  <groupId>org.apache.flink</groupId>
+  <artifactId>flink-queryable-state-client-java</artifactId>
+  <version>1.11.0</version>
+</dependency>
+ ```
+* 其次在代码中通过QueryableStateClient和Flink Application建立连接：
+  ```  
+  QueryableStateClient client = new QueryableStateClient(tmHostname, proxyPort);
+  ```
+* 然后调用getKvState()方法查询状态指标
+  ```
+  CompletableFuture<S> getKvState( JobID jobId, String queryableStateName, K key, TypeInformation<K> keyTypeInfo, StateDescriptor<S, V> stateDescriptor)
+  ```
+
+
+#### 4.2.6.4. Queryable State 实例
+```
+public class CountWindowAverage extends RichFlatMapFunction<Tuple2<Long, Long>, Tuple2<Long, Long>> {
+
+    private transient ValueState<Tuple2<Long, Long>> sum; // a tuple containing the count and the sum
+  
+    @Override
+    public void flatMap(Tuple2<Long, Long> input, Collector<Tuple2<Long,Long>> out) throws Exception {
+      Tuple2<Long, Long> currentSum = sum.value();
+      
+      currentSum.f0 += 1;
+      
+      currentSum.f1 += input.f1;
+      
+      sum.update(currentSum);
+      
+      if (currentSum.f0 >= 2) {
+      
+        out.collect(new Tuple2<>(input.f0, currentSum.f1 / currentSum.f0));
+      
+        sum.clear();
+      }
+    }
+    @Override
+    public void open(Configuration config) {
+      ValueStateDescriptor<Tuple2<Long, Long>> descriptor = new ValueStateDescriptor<>("average", // the state name
+      
+      TypeInformation.of(new TypeHint<Tuple2<Long, Long>>() {}));
+      
+      // type information
+      descriptor.setQueryable("query-name");
+      
+      sum = getRuntimeContext().getState(descriptor);
+    }
+}
+```
+
+
+
+```
+QueryableStateClient client = new QueryableStateClient(tmHostname, proxyPort);
+
+// the state descriptor of the state to be fetched.
+ValueStateDescriptor<Tuple2<Long, Long>> descriptor = new ValueStateDescriptor<>(
+"average",
+TypeInformation.of(new TypeHint<Tuple2<Long,
+Long>>() {}));
+
+CompletableFuture<ValueState<Tuple2<Long, Long>>> resultFuture = client.getKvState(jobId, "query-name", key, BasicTypeInfo.LONG_TYPE_INFO, descriptor);
+
+// now handle the returned value
+
+resultFuture.thenAccept(response -> {
+  try {
+    Tuple2<Long, Long> res = response.get();
+  } catch (Exception e) {
+    e.printStackTrace();
+  }
+});
+```
