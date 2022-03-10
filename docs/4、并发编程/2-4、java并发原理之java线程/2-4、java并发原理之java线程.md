@@ -36,6 +36,7 @@ java语言对操作系统的线程进行了进一步的封装，新增了几个�
 * TIMED_WAITING（有时限等待）
 * TERMINATED（终止状态）  
   
+
 其实上面的阻塞或者等待状态都是属于操作系统的休眠状态（BLOCKED、WAITING、TIMED_WAITING ），只是说java对这几种状态的转换机制做了区分，只要我们理解它们转换状态的机制，就能记住这些状态。  
 ### 1.3. java线程的流转  
 #### 1.3.1. new->runnable  
@@ -70,6 +71,7 @@ Thread thread = new Thread(new Task());
 * 调用带超时参数的 LockSupport.parkNanos(Object blocker, long deadline) 方法
 * 调用带超时参数的 LockSupport.parkUntil(long deadline) 
   
+
 所以这里 TIMED_WAITING 和 WAITING 状态的区别就是是否有超时事件
 
 #### 1.3.5. runnable -> TERMINATED
@@ -82,6 +84,7 @@ Thread thread = new Thread(new Task());
   * 异常通知，比如调用wait()、join()、sleep() 方法就会要捕获一个InterruptedException异常，如果出现了该异常，就代表该线程被终止了，你需要处理后事了
   * 自己检测，如果方法没有这种方法调用，可以在线程的代码中检测isInterrupted()是否为true，代表线程被终止了.
   
+
 **注意：抛出interrupt异常后，中断标示会自动清除掉变成false,即isInterrupted为false**
 
 ### 1.4. java线程的局部变量  

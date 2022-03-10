@@ -26,7 +26,7 @@
 
   ```
   
-  # gradle
+  gradle
   ```
 
 * 恢复生成windows的gradlew执行脚本
