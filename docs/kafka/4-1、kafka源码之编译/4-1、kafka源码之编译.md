@@ -1,8 +1,8 @@
 ## 1. 准备环境
 
-* Oracle Java 8：专栏使用的是 Oracle 的 JDK 及 Hotspot JVM。
+* Oracle Java 8： Oracle 的 JDK 及 Hotspot JVM。
 
-* Gradle 5.0：我在专栏里带你阅读的 Kafka 源码是社区的 Trunk 分支。Trunk 分支目前演进到了 2.4.0 版本，还不支持 Gradle 6.0，因此，需要安装 **Gradle 5.x 版本。**
+* Gradle 5.0：不支持 Gradle 6.0，因此，需要安装 **Gradle 5.x 版本。**
 
 * Scala 2.12：当前社区编译 Kafka 支持 3 个 Scala 版本，分别是 2.11、2.12 和 2.13。2.11 应该很快就会不支持了，而 2.13 又是刚刚推出的版本，推荐安装 Scala 2.12 版本。
 
