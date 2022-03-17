@@ -1,23 +1,26 @@
 ## 1. 开头
-&emsp;&emsp;上一篇介绍了elasticsearch的写入流程，了解了elasticsearch写入时的分布式特性的相关原理。elasticsearch作为一款具有强大搜索功能的存储引擎，它的查询是什么样的呢？在使用过程中有哪些需要我们注意的呢？  
-&emsp;&emsp;在前面的文章我们已经知道elasticsearch的读取分为两种GET和SEARCH。这两种操作是有一定的差异的，下面我们分别对这两种核心的数据读取方式进行一一分析。
+&emsp;&emsp;上一篇介绍了elasticsearch的写入流程，了解了elasticsearch写入时的分布式特性的相关原理。elasticsearch作为一款具有强大搜索功能的存储引擎，它的读取是什么样的呢？读取相比写入简单的多，但是在使用过程中有哪些需要我们注意的呢？  
+&emsp;&emsp;在前面的文章我们已经知道elasticsearch的读取分为两种GET和SEARCH。这两种操作是有一定的差异的，下面我们先对这两种核心的数据读取方式进行一一分析。
 
 ## 2. GET的流程
 ### 2.1 整体流程
 ![](get流程总览.png)  
 图片来自官网  
 以下是从主分片或者副本分片检索文档的步骤顺序：
-（ 客户端向 Node 1 发送获取请求。
-* 节点使用文档的 _id 来确定文档属于分片 0 。分片 0 的副本分片存在于所有的三个节点上。 在这种情况下，它将请求转发到 Node 2 。
+
+* 客户端向 Node 1 发送获取请求
+
+* 节点使用文档的 _id 来确定文档属于分片 0 。分片 0 的副本分片存在于所有的三个节点上。 在这种情况下，它将请求转发到 Node 2 
 * Node 2 将文档返回给 Node 1 ，然后将文档返回给客户端。  
-  
-&emsp;&emsp;在处理读取请求时，协调结点在每次请求的时候都会通过轮询所有的副本分片来达到负载均衡。  
-&emsp;&emsp;在文档被检索时，已经被索引的文档可能已经存在于主分片上但是还没有复制到副本分片。 在这种情况下，副本分片可能会报告文档不存在，但是主分片可能成功返回文档。 一旦索引请求成功返回给用户，文档在主分片和副本分片都是可用的
 
-### 2.3 整体流程
+注意：
 
-### 2.2. GET流程
-参考文档：https://zhuanlan.zhihu.com/p/34674517
+- 在处理读取请求时，协调结点在每次请求的时候都会通过轮询所有的副本分片来达到负载均衡。
+- 在文档被检索时，已经被索引的文档可能已经存在于主分片上但是还没有复制到副本分片。在这种情况下，副本分片可能会报告文档不存在，但是主分片可能成功返回文档。 一旦索引请求成功返回给用户，文档在主分片和副本分片都是可用的
+
+### 2.2. GET详细流程
+
+#### 2.2.1.  协调节点处理过程
 
 在协调节点有个http_server_worker线程池。收到读请求后它的具体过程为：  
 * 收到请求，先获取集群的状态信息
@@ -28,94 +31,262 @@
 * 等待数据节点回复，如果成功则返回数据给客户端，否则会重试
 * 重试会发送上述列表的下一个。  
 
+#### 2.2.2.  数据节点处理过程
 
-在数据节点有个shardTransporthander的messageReceived的入口专门接收协调节点发送的请求。  
-```
-    private class ShardTransportHandler implements TransportRequestHandler<Request> {
+数据节点上有一个get线程池。收到了请求后，处理过程为：
 
-        @Override
-        public void messageReceived(final Request request, final TransportChannel channel, Task task) throws Exception {
-            if (logger.isTraceEnabled()) {
-                logger.trace("executing [{}] on shard [{}]", request, request.internalShardId);
+* 在数据节点有个shardTransporthander的messageReceived的入口专门接收协调节点发送的请求
+
+  ```
+  private class ShardTransportHandler implements TransportRequestHandler<Request> {
+      @Override
+      public void messageReceived(final Request request, final TransportChannel channel, Task task) {
+          asyncShardOperation(request, request.internalShardId, new ChannelActionListener<>(channel, transportShardAction, request));
+      }
+  }
+  ```
+
+* shardOperation先检查是否需要refresh，然后调用indexShard.getService().get()读取数据并存储到GetResult中。
+
+  ```
+  if (request.refresh() && !request.realtime()) {
+  	indexShard.refresh("refresh_flag_get");
+  }
+  GetResult result = indexShard.getService().get(request.type(), request.id(), request.storedFields(), request.realtime(), request.version(), request.versionType(), request.fetchSourceContext());
+  ```
+
+  * indexShard.getService().get()最终会调用GetResult getResult = innerGet(……)用来获取结果。即ShardGetService#innerGet  
+
+    ```java
+    private GetResult innerGet(String type, String id, String[] gFields, boolean realtime, long version, VersionType versionType, long ifSeqNo, long ifPrimaryTerm, FetchSourceContext fetchSourceContext) {
+        	
+        	................
+        	
+            Engine.GetResult get = null;
+           
+                ............
+                
+            get = indexShard.get(new Engine.Get(realtime, realtime, type, id, uidTerm).version(version).versionType(versionType).setIfSeqNo(ifSeqNo).setIfPrimaryTerm(ifPrimaryTerm));
+                ..........
+              
+            if (get == null || get.exists() == false) {
+                return new GetResult(shardId.getIndexName(), type, id, UNASSIGNED_SEQ_NO, UNASSIGNED_PRIMARY_TERM, -1, false, null, null, null);
             }
-            asyncShardOperation(request, request.internalShardId, new ChannelActionListener<>(channel, transportShardAction, request));
-        }
-    }
-```
-最终会调用org.elasticsearch.index.get.ShardGetService#innerGet的方法
-```
-    private GetResult innerGet(String type, String id, String[] gFields, boolean realtime, long version, VersionType versionType,
-                               long ifSeqNo, long ifPrimaryTerm, FetchSourceContext fetchSourceContext) {
-        fetchSourceContext = normalizeFetchSourceContent(fetchSourceContext, gFields);
-        if (type == null || type.equals("_all")) {
-            DocumentMapper mapper = mapperService.documentMapper();
-            type = mapper == null ? null : mapper.type();
-        }
-
-        Engine.GetResult get = null;
-        if (type != null) {
-            Term uidTerm = new Term(IdFieldMapper.NAME, Uid.encodeId(id));
-            get = indexShard.get(new Engine.Get(realtime, realtime, type, id, uidTerm)
-                .version(version).versionType(versionType).setIfSeqNo(ifSeqNo).setIfPrimaryTerm(ifPrimaryTerm));
-            assert get.isFromTranslog() == false || realtime : "should only read from translog if realtime enabled";
-            if (get.exists() == false) {
+    
+            try {
+                return innerGetLoadFromStoredFields(type, id, gFields, fetchSourceContext, get, mapperService);
+            } finally {
                 get.close();
             }
-        }
+    ```
 
-        if (get == null || get.exists() == false) {
-            return new GetResult(shardId.getIndexName(), type, id, UNASSIGNED_SEQ_NO, UNASSIGNED_PRIMARY_TERM, -1, false, null, null, null);
-        }
+  * 上面代码的indexShard.get会最终调用org.elasticsearch.index.engine.InternalEngine#gett读取真正的数据
 
-        try {
-            // break between having loaded it from translog (so we only have _source), and having a document to load
-            return innerGetLoadFromStoredFields(type, id, gFields, fetchSourceContext, get, mapperService);
-        } finally {
-            get.close();
-        }
-    }
-```
-InternalEngine#get过程会加读锁。处理realtime选项，如果为true，则先判断是否有数据可以刷盘，然后调用Searcher进行读取。Searcher是对IndexSearcher的封装。
+    ```
+        public GetResult get(Get get, BiFunction<String, SearcherScope, Engine.Searcher> searcherFactory) throws EngineException {
+            try (ReleasableLock ignored = readLock.acquire()) {
+                ensureOpen();
+                SearcherScope scope;
+                if (get.realtime()) {
+                    VersionValue versionValue = null;
+                    try (Releasable ignore = versionMap.acquireLock(get.uid().bytes())) {
+                        // we need to lock here to access the version map to do this truly in RT
+                        versionValue = getVersionFromMap(get.uid().bytes());
+                    }
+                    if (versionValue != null) {
+                        if (versionValue.isDelete()) {
+                            return GetResult.NOT_EXISTS;
+                        }
+            。。。。。。
+            //刷盘操作
+             refreshIfNeeded("realtime_get", versionValue.seqNo);
+    ```
 
-从ES 5.x开始不会从translog中读取，只从Lucene中读。realtime的实现机制变成依靠refresh实现
+    
+
+    get过程会加读锁。处理realtime选项，如果为true，则先判断是否有数据可以刷盘，然后调用Searcher进行读取。Searcher是对IndexSearcher的封装
+
+    在早期realtime为true则会从tranlog中读取，后面只会从index的lucene读取了。即实时的数据只在lucene之中。
+
+  * innerGetLoadFromStoredFields根据type，id，filed，source等信息过滤，并将结果放到getresult之中返回
 
 参考文章：https://jiankunking.com/elasticsearch-get-source-code-analysis.html
 https://www.cnblogs.com/wangnanhui/articles/13273764.html
-它其中的流程主要是：
-* shardOperation先检查是否需要refresh，然后调用indexShard.getService().get()读取数据并存储到GetResult中。读取及过滤 在ShardGetService#get()
-* GetResult getResult = innerGet(……)；
-获取结果。GetResult类用于存储读取的真实数据内容。核心的数据读取实现在ShardGetService#innerGet
 
-InternalEngine#get过程会加读锁。处理realtime选项，如果为true，则先判断是否有数据可以刷盘，然后调用Searcher进行读取。Searcher是对IndexSearcher的封装  
-从ES 5.x开始不会从translog中读取，只从Lucene中读。realtime的实现机制变成依靠refresh实现。参考官方链接  
+### 2.3. 小结
 
+* GET是根据doc id 哈希找到对应的shard的
 
-GET是根据Document _id 哈希找到对应的shard的。
-根据Document _id查询的实时可见是通过依靠refresh实现的。  
+- get请求默认是实时的，但是不同版本有差异，在5.x以前，读不到写的doc会从translog中去读取，之后改为读取不到会进行refresh到lucene中，因此现在的实时读取需要复制一定的性能损耗的代价。如果对实时性要求不高，可以请求是手动带上realtime为false
 
 
+## 3. search流程  
+​	对于Search类请求，elasticsearch请求是查询lucene的Segment，前面的写入详情流程也分析了，新增的文档会定时的refresh到磁盘中，所以搜索是属于近实时的。 而且因为没有文档id，你不知道你要检索的文档在哪个分配上，需要将索引的所有的分片都去搜索下，然后汇总。   
+elasticsearch的search一般有两个搜索类型  
 
-
-### 2.3. search流程  
-对于Search类请求，elasticsearch请求是查询lucence的Segment，前面的写入详情流程也分析了，新增的文档会定时的refresh到磁盘中，所以搜索是属于近实时的。    
-elasticsearch的search有两个搜索类型  
 * dfs_query_and_fetch，流程复杂一些，但是算分的时候使用了全局的一些指标，这样获取的结果可能更加精确一些。
-* query_and_fetch，默认的搜索类型。  
+* query_then_fetch，默认的搜索类型
 
-具体的搜索的流程图如下：  
+​	所有的搜索系统一般都是两阶段查询，第一阶段查询到匹配的DocID，第二阶段再查询DocID对应的完整文档，这种在Elasticsearch中称为query_then_fetch，另一种就是一阶段查询的时候就返回完整Doc，在Elasticsearch中叫query_and_fetch，一般第二种适用于只需要查询一个Shard的请求。因为这种一次请求就能将数据请求到，减少交互次数，二阶段的原因是需要多个分片聚合汇总，如果数据量太大那么会影响网络传输效率，所以第一阶段会先返回id。
 
+​	除了上述的这两种查询外，还有一种三阶段查询的情况。搜索里面有一种算分逻辑是根据TF和DF来计算score的，而在普通的查询中，第一阶段去每个Shard中独立查询时携带条件算分都是独立的，即Shard中的TF和DF也是独立的，虽然从统计学的基础上数据量多的情况下，每一个分片的TF和DF在整体上会趋向于准确。但是总会有情况导致局部的TF和DF不准的情况出现。
 
- elasticsearch作为一款分布式搜索引擎，search一般还是会经过两个步骤的。  
-![](search流程.png)  
-图片来自官网    
+​	Elasticsearch为了解决这个问题引入了DFS查询，比如DFS_query_then_fetch，它在每次查询时会先收集所有Shard中的TF和DF值，然后将这些值带入请求中，再次执行query_then_fetch，这样算分的时候TF和DF就是准确的，类似的有DFS_query_and_fetch。这种查询的优势是算分更加精准，但是效率会变差。
+
+​	另一种选择是用BM25代替TF/DF模型。在Elasticsearch 7.x，用户没法指定DFS_query_and_fetch和query_and_fetch。
+
+注：这两种算分的算法模型在《elasticsearch实战篇》有介绍：
+
+​	这里query_then_fetch具体的搜索的流程图如下：    
+![](search流程.png)  图片来自官网 
+
 查询阶段包含以下三个步骤:
+
 * 客户端发送一个 search 请求到 Node 3 ， Node 3 会创建一个大小为 from + size 的空优先队列。
 * Node 3 将查询请求转发到索引的每个主分片或副本分片中。每个分片在本地执行查询并添加结果到大小为 from + size 的本地有序优先队列中。
 * 每个分片返回各自优先队列中所有文档的 ID 和排序值给协调节点，也就是 Node 3 ，它合并这些值到自己的优先队列中来产生一个全局排序后的结果列表。
 * 当一个搜索请求被发送到某个节点时，这个节点就变成了协调节点。 这个节点的任务是广播查询请求到所有相关分片并将它们的响应整合成全局排序后的结果集合，这个结果集合会返回给客户端。
 
+### 3.1. 协调节点
 
+#### 3.1.1.  query阶段
 
-所有的搜索系统一般都是两阶段查询，第一阶段查询到匹配的DocID，第二阶段再查询DocID对应的完整文档，这种在Elasticsearch中称为query_then_fetch，还有一种是一阶段查询的时候就返回完整Doc，在Elasticsearch中称作query_and_fetch，一般第二种适用于只需要查询一个Shard的请求。  
-除了一阶段，两阶段外，还有一种三阶段查询的情况。搜索里面有一种算分逻辑是根据TF（Term Frequency）和DF（Document Frequency）计算基础分，但是Elasticsearch中查询的时候，是在每个Shard中独立查询的，每个Shard中的TF和DF也是独立的，虽然在写入的时候通过_routing保证Doc分布均匀，但是没法保证TF和DF均匀，那么就有会导致局部的TF和DF不准的情况出现，这个时候基于TF、DF的算分就不准。为了解决这个问题，Elasticsearch中引入了DFS查询，比如DFS_query_then_fetch，会先收集所有Shard中的TF和DF值，然后将这些值带入请求中，再次执行query_then_fetch，这样算分的时候TF和DF就是准确的，类似的有DFS_query_and_fetch。这种查询的优势是算分更加精准，但是效率会变差。另一种选择是用BM25代替TF/DF模型。
-在新版本Elasticsearch中，用户没法指定DFS_query_and_fetch和query_and_fetch，这两种只能被Elasticsearch系统改写。
+协调节点处理query请求的线程池为：http_server_work
+
+* 负责解析请求
+
+  负责该解析功能的类为org.elasticsearch.rest.action.search.RestSearchAction
+
+  ```
+     @Override
+      public RestChannelConsumer prepareRequest(final RestRequest request, final NodeClient client) throws IOException {
+          SearchRequest searchRequest = new SearchRequest();
+          IntConsumer setSize = size -> searchRequest.source().size(size);
+          request.withContentOrSourceParamParserOrNull(parser ->
+              parseSearchRequest(searchRequest, request, parser, client.getNamedWriteableRegistry(), setSize));
+  			。。。。。。。。。。。。
+          };
+      }
+  ```
+
+  主要讲restquest的参数封装成SearchRequest
+
+* 生成目的分片列表
+
+  将索引涉及到的shard列表或者有跨集群访问相关的shard列表合并
+
+* 遍历分片发送请求
+
+* 收集和合并请求
+
+#### 3.1.2.  fetch阶段
+
+### 3.2. 数据节点
+
+处理数据节点请求的线程池为：search，根据前面的两个阶段，数据节点主要处理协调节点的两类请求：query和fetch
+
+* 响应query请求
+
+  这里响应的请求就是第一阶段的query请求
+
+  ```
+  transportService.registerRequestHandler(QUERY_ACTION_NAME, ThreadPool.Names.SAME, ShardSearchRequest::new,
+              (request, channel, task) -> {
+              	//执行查询
+                  searchService.executeQueryPhase(request, keepStatesInContext(channel.getVersion()), (SearchShardTask) task,
+                  //注册结果监听器
+                      new ChannelActionListener<>(channel, QUERY_ACTION_NAME, request));
+              });
+  ```
+
+  executeQueryPhase:
+
+  ```
+    public void executeQueryPhase(ShardSearchRequest request, boolean keepStatesInContext,
+                                    SearchShardTask task, ActionListener<SearchPhaseResult> listener) {
+       
+       ...........
+       
+          final IndexShard shard = getShard(request);
+          rewriteAndFetchShardRequest(shard, request, new ActionListener<ShardSearchRequest>() {
+              @Override
+              public void onResponse(ShardSearchRequest orig) {
+                	
+                	.......
+                	
+                  //执行真正的请求
+                  runAsync(getExecutor(shard), () -> executeQueryPhase(orig, task, keepStatesInContext), listener);
+              }
+  
+              @Override
+              public void onFailure(Exception exc) {
+                  listener.onFailure(exc);
+              }
+          });
+      }
+      
+  ```
+
+  executeQueryPhase会执行loadOrExecuteQueryPhase方法
+
+  ```
+  private void loadOrExecuteQueryPhase(final ShardSearchRequest request, final SearchContext context) throws Exception {
+          final boolean canCache = indicesService.canCache(request, context);
+          context.getQueryShardContext().freezeContext();
+          if (canCache) {
+              indicesService.loadIntoContext(request, context, queryPhase);
+          } else {
+              queryPhase.execute(context);
+          }
+      }
+  ```
+
+  这里判断是否从缓存查询，默认启用缓存，缓存的算法默认为LRU，即删除最近最少使用的数据，
+
+  如果不启用缓存则会执行queryPhase.execute(context);底层调用lucene进行检索，并且进行聚合
+
+  ```
+    public void execute(SearchContext searchContext) throws QueryPhaseExecutionException {
+          .......
+          //聚合预处理
+          aggregationPhase.preProcess(searchContext);
+          .......
+         	//全文检索并打分
+          rescorePhase.execute(searchContext);
+          .......
+           //自动补全和纠错
+          suggestPhase.execute(searchContext);
+          //实现聚合
+          aggregationPhase.execute(searchContext);
+  		.......
+  		
+      }
+  ```
+
+  关键点：
+
+  * 慢查询日志中的query日志统计时间就是该步骤的时间
+  * 聚合lucene的操作也是在本阶段完成，
+  * 查询的时候会使用lRU缓存，缓存为节点级别的
+
+* 响应fetch请求
+
+  ```
+  transportService.registerRequestHandler(FETCH_ID_ACTION_NAME, ThreadPool.Names.SAME, true, true, ShardFetchSearchRequest::new,
+              (request, channel, task) -> {
+                  searchService.executeFetchPhase(request, (SearchShardTask) task,
+                      new ChannelActionListener<>(channel, FETCH_ID_ACTION_NAME, request));
+              });
+  ```
+
+  * 执行fetch
+    * 调用fetchPhase的execute方法获取doc
+  * 将结果封装到FetchSearchResult，调用网络组件发送到response
+
+### 3.3. 小结
+
+* search是比较耗费资源的，它需要遍历相关的所有分片，每个分片可能有多个lucene段，那么每个段都会遍历一下，因此elasticsearch的常见优化策略就是将段进行合并
+* 分页查询的时候，即使是查后面几页，也会将前几页的数据聚合进行分页，因此非常耗费内存，对于这种有深度分页的需求可能要寻找其它的解决方式。
+
+## 4. 总结
+
