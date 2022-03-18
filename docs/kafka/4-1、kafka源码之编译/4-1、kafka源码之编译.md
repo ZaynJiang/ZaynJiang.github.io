@@ -41,7 +41,7 @@
   ```
 
 * 根目录下执行 gradle wrapper 命令 gradlew.bat文件生成
-* 根目录下执行gradlew jar生成 Jar 文件
+* 根目录下执行gradlew.bat jar生成 Jar 文件
 
 ## 3. 代码结构
 
