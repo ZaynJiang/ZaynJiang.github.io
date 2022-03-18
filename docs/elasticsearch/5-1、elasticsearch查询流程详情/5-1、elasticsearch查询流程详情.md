@@ -171,6 +171,10 @@ elasticsearch的search一般有两个搜索类型
 
   主要讲restquest的参数封装成SearchRequest
 
+* 将构造的SearchRequest请求发送给TransportSearchAction处理
+
+  
+
 * 生成目的分片列表
 
   将索引涉及到的shard列表或者有跨集群访问相关的shard列表合并
@@ -180,6 +184,11 @@ elasticsearch的search一般有两个搜索类型
 * 收集和合并请求
 
 #### 3.1.2.  fetch阶段
+
+* 发送fetch请求
+* 收集结果
+* 执行字段折叠功能
+* 回复客户端
 
 ### 3.2. 数据节点
 
