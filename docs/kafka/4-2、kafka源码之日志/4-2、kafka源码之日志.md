@@ -1695,6 +1695,16 @@ read 方法的返回值是 FetchDataInfo 类，也是一个 POJO 类，里面最
 
   日志读写是实现 Kafka 消息引擎基本功能的基石
 
-![](kafka日志管理总结.png) 
+![](kafka日志管理总结.png)
+
+* 统计介于高水位值和LEO值之间的消息总数
+
+  ```
+  private[log] def messageCountBetweenHWAndLEO: Long = {
+  	logEndOffset - highWatermarkMetadata.messageOffset
+  }
+  ```
+
+   
 
 ## 5. 总结
