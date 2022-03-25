@@ -173,7 +173,7 @@ elasticsearch的search一般有两个搜索类型
 
 * 将构造的SearchRequest请求发送给TransportSearchAction处理
 
-  
+  ![image-20220321232346860](D:\IdeaProjects\ZaynJiang.github.io\docs\elasticsearch\5-1、elasticsearch查询流程详情\image-20220321232346860.png)
 
 * 生成目的分片列表
 
