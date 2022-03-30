@@ -85,6 +85,36 @@
   ​	一般来说。 测试环境、预上线环境的JDK配置需要和生产环境一致
 
   
+  
+  jdk9 :
+  
+  * 定义功能是一套全新的模块系统，模块化的 JAR 文件都包含一个额外的模块描述器
+  * JShell : 交互式 Java REPL，具有交互式编程环境
+  * 改进的 Javadoc
+  * 集合工厂方法，如List<String> strings = List.of("first","second");
+  * 改进的 Stream API
+  * 私有接口方法
+  * HTTP/2，Java 9 中有新的方式来处理 HTTP 调用
+  
+  jdk10 :
+  
+  * 新增局部变量类型推断 var
+  * 删除工具 javah，使用 javac -h 代替
+  * 统一的垃圾回收接口，改进了 GC 和其他内务管理
+  * 其他新特性
+  
+  jdk11 : 
+  
+  * Lambda 表达式中使用 var
+  * 字符串 API 增强，如isBlank
+  * 标准化 HTTPClient API
+  * java 命令直接编译运行 java
+  * 增加对 TLS 1.3(加密协议) 的支持
+  
+  jdk12:
+  
+  * switch 不仅可以作为语句，也可以作为表达式。
+  
 
 ## 中等
 
