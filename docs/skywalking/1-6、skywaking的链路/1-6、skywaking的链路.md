@@ -611,7 +611,609 @@ public static final StringTag DB_TYPE = new StringTag(3, "db.type");
 
   asyncStop提交这个span
 
+#### 4.4.3. StackBasedTracingSpan
+
+这个span继承于AbstractTracingSpan。从这个类的注释我们可以看出
+
+```
+This kind of span can start and finish multi times in a stack-like invoke line.
+```
+
+这个栈可以在一个栈的调用中被启动和finish多次。
+
+##### 4.4.3.1. 示例
+
+到底该怎么理解呢？举例如下：
+
+* 一个tomcat部署了一个sprinmvc的应用
+
+* 一个请求进来，先进入到tomcat的plugin，会创建一个EntrySpan
+
+  一个segment只能有一个entryspan。
+
+  ```
+  AbstractSpan span = ContextManager.createEntrySpan(request.getRequestURI(), contextCarrier);
+  Tags.URL.set(span, request.getRequestURL().toString());
+  Tags.HTTP.METHOD.set(span, request.getMethod());
+  span.setComponent(ComponentsDefine.TOMCAT);
+  SpanLayer.asHttp(span);
+  ```
+
+* tomcat的请求到达springmvc插件，也会执行这个创建方法
+
+  ```
+  AbstractSpan span = ContextManager.createEntrySpan(operationName, contextCarrier);
+  Tags.URL.set(span, httpServletRequest.getRequestURL().toString());
+  Tags.HTTP.METHOD.set(span, httpServletRequest.getMethod());
+  span.setComponent(ComponentsDefine.SPRING_MVC_ANNOTATION);
+  SpanLayer.asHttp(span);
+  ```
+
+  * 一个segment只能有一个entryspan。因此会复用tomcat层的entryspan。
+  * 因此后面的插件会覆盖前面创建的entryspan的span信息，不如componet等等之类的。这种覆盖关系的实现就需要使用stackbasedtracingspan技术了
+
+* 调用getUser方法，这个创建的是一个localspan了。
+
+##### 4.4.3.2. 栈结构
+
+entryspan时使用当前栈深度和当前最大栈深来保存
+
+![](entry栈示例图1.png) 
+
+**注意在这个栈中是一个span，从下到上是从tomcat请求到结束的变化图**。从这个请求过程和参数我们可以得出结论：
+
+* 当最大值和当前值相等时，为正向请求
+* 当当前值小于最大值时，说明请求返回
+* entryspan记录的信息永远是最靠近服务的提供侧的信息。即getUser
+
+##### 4.4.3.4. 核心属性
+
+```
+public abstract class StackBasedTracingSpan extends AbstractTracingSpan {
+    protected int stackDepth;
+    protected String peer;
+```
+
+* stackdepth
+
+  表示栈的深度
+
+* peer
+
+  调用目标地址
+
+```
+@Override
+public boolean finish(TraceSegment owner) {
+    if (--stackDepth == 0) {
+        return super.finish(owner);
+    } else {
+        return false;
+    }
+}
+```
+
+当栈的深度为0的时候，说明栈空了，需要结束了，结束TraceSegment
+
+#### 4.4.4. EntrySpan
+
+* public EntrySpan start()
+
+  这个entryspan继承于stackbasedTracingspan.根据注释我们可以知道，这个entryspan只能由一定进入的插件创建。而entryspan的信息永远是最靠近服务测的信息。
+
+  ```
+  @Override
+  public EntrySpan start() {
+      if ((currentMaxDepth = ++stackDepth) == 1) {
+          super.start();
+      }
+      clearWhenRestart();
+      return this;
+  }
+  ```
+
+  这里如果stackdeth为1，说明时请求进入方向。
+
+  * 后面的插件会复用entryspan时，都会调用下这个方法。
+
+  * 因为每一个插件认为自己时第一个entryspan。
+
+  * 如果不等于1则会clearwhenrestart()，即清空一些基础信息。
+
+* 其它方法
+
+  * public EntrySpan tag(String key, String value)
+
+  * public AbstractTracingSpan setLayer(SpanLayer layer)
+
+  * public AbstractTracingSpan setComponent(Component component) 
+
+  这些方法为设置调用信息，但是都会都会判断stackDepth == currentMaxDepth，因为这个是请求进入的方向，否则被反向覆盖
+
+#### 4.4.5. ExitSpan
+
+这个和entryspan类似，exitspan记录的时更靠近服务测的信息，比如dubbo调用，再调用httpclient调用，那么最终记录的是更靠近消费侧的信息，即dubbo的信息
+
+* 启动方法
+
+  ```
+  public ExitSpan start() {
+      if (++stackDepth == 1) {
+          super.start();
+      }
+      return this;
+  }
+  ```
+
+  只有栈的深度等于1时，才会启动，即刚刚创建。
+
+* 我们一般在进行跨进程调用的时候会创建exitspan，并进行设置peer地址。比如访问redis或者访问mysql。都是一个exitspan。
+
+* eixtspan和entryspan都是采用复用的机制，但前提时在嵌套调用之中。
+* 多个exitspan不存在嵌套关系，是平行存在的，是兄弟关系
+* tracesement里面不一定要有exitspan
+
+因此exitspan可以简单理解为离开当前线程。
+
+![](exitspan调用图.png) 
+
+
+
+#### 4.4.6. LocalSpan
+
+根据注释我们也可以知道
+
+```
+represents a normal tracing point, such as a local method
+```
+
+就是一个普通的点，通常记录一个本地方法的调用。
+
+比如我们使用skywaking的工具包上面有注解，可以标注某些方法为localspan.它记录一些简单的信息
+
+```
+public LocalSpan(int spanId, int parentSpanId, String operationName, TracingContext owner) {
+    super(spanId, parentSpanId, operationName, owner);
+}
+```
+
+例如pinpoint的链路追踪可以精确到调用链中的每一个方法。它就是使用了多个localspan,它的追踪粒度非常大。而skaywalking采用了新的思路，性能剖析工具，填写的性能剖析的追踪请求后，就可以达到pinpoint的同样的思路了。
+
+#### 4.4.7. 小结
+
+![](span的继承结构.png) 
+
+注意，这里的noopexitspan，noopspan代表一个不会被记录的操作。为了确保span的整个工作流程的统一。
+
 ### 4.5. span引用关系
 
 ![](span引用关系.png) 
 
+## 5. TracerContext
+
+### 5.1. AbstractTracerContext
+
+这个整个链路追踪的上下文管理器
+
+* inject
+
+  将跨进程的ContextCarrier注入进来，这个ContextCarrier就是一个segment中的所有信息。
+
+  根据注释我们也可以知道它是跨进程调用会进行inject，需要传递一个ContextCarrier作为载具	
+
+* extract
+
+  与上面相反，它是提取信息，即跨进程的segment信息中提取
+
+* capture
+
+  用于跨线程传播数据调用使用，上面的是跨进程传输数据。不需要载具，直接生成快照即可。
+
+* continue
+
+  与capture相反，用于跨线程提取数据
+
+* getReadablePrimaryTraceId
+
+  获取只读的traceid
+
+* getSegmentId
+
+  获取当前segment的id
+
+* int getSpanId();
+
+  获取当前活跃的spanid
+
+* createEntrySpan
+
+  创建entryspan
+
+* createLocalSpan
+
+  创建localspan
+
+* createExitSpan
+
+  创建localspan
+
+* activeSpan
+
+  拿到当前活跃的span对象
+
+* stopSpan
+
+  Finish the given span
+
+* CorrelationContext getCorrelationContext()
+
+  获取用户自定义的一些数据
+
+### 5.2. IgnoredTracerContext
+
+这个是AbstractTracerContext的其中一个实现，这个就是不需要追踪的trace或span被这个上下文进行管理。这个是为了确保流程的一致性
+
+```
+/**
+ * The <code>IgnoredTracerContext</code> represent a context should be ignored. So it just maintains the stack with an
+ * integer depth field.
+ * <p>
+ * All operations through this will be ignored, and keep the memory and gc cost as low as possible.
+ */
+public class IgnoredTracerContext implements AbstractTracerContext {
+    private static final NoopSpan NOOP_SPAN = new NoopSpan();
+    private static final String IGNORE_TRACE = "Ignored_Trace";
+
+    private final CorrelationContext correlationContext;
+    private final ExtensionContext extensionContext;
+
+    private int stackDepth;
+```
+
+### 5.3. TracingContext
+
+这个是AbstractTracerContext的核心实现，是核心的追踪逻辑控制器。它基于栈工作机制构建tracingcontext。在跨线程或进程之间，我们使用TraceSegmentRef表示这种关系。而这种联系是通过ContextCarrier或者ContextSnapshot载具进行实现的。可以参考AbstractTracerContext的前几个核心的方法。所以总结下来这个类的核心功能就是：
+
+* 当前的segment和自己前后的segment的引用TraceSegmentRef
+* 当前的segment内的所有的span
+
+#### 5.3.1.  核心属性
+
+* 一个tracecontext持有一个Segment对象
+
+* 活跃的span都存在一个栈里面 
+
+  ```
+  private LinkedList<AbstractSpan> activeSpanStack = new LinkedList<>();
+  ```
+
+  这些方法提供一些栈的操作
+
+* AbstractSpan firstSpan
+
+  从7.0.0开始支持延迟注入数据，比如inject跨进程时，支持空的注入
+
+* spanIdGenerator
+
+  生成下一个spanid
+
+* span个数更新器，采用原子方法更新
+
+  ```
+  private volatile int asyncSpanCounter;
+  private static final AtomicIntegerFieldUpdater<TracingContext> ASYNC_SPAN_COUNTER_UPDATER =
+      AtomicIntegerFieldUpdater.newUpdater(TracingContext.class, "asyncSpanCounter");
+  ```
+
+* private volatile boolean running;
+
+  当前tractcontext是否在运行
+
+* SpanLimitWatcher
+
+  配置更新监听器
+
+*  TracingContext(String firstOPName, SpanLimitWatcher spanLimitWatcher) {
+
+  构造器传入名字和监听器
+
+#### 5.3.2.  活跃span
+
+我们在一次请求的segment按顺序创建的segment都会一些span，这些span都放入到上面说的栈之中，而位于栈顶的span就是活跃的span
+
+![](活跃span.png) 
+
+#### 5.3.3.  核心方法
+
+* 获取当前spanid
+
+  ```
+  public int getSpanId() {
+      return activeSpan().getSpanId();
+  }
+  ```
+
+  获取当前活跃span的id
+
+* createEntrySpan
+
+  ```
+  public AbstractSpan createEntrySpan(final String operationName) {
+      if (isLimitMechanismWorking()) {
+          NoopSpan span = new NoopSpan();
+          return push(span);
+      }
+      AbstractSpan entrySpan;
+      TracingContext owner = this;
+      final AbstractSpan parentSpan = peek();
+      final int parentSpanId = parentSpan == null ? -1 : parentSpan.getSpanId();
+      if (parentSpan != null && parentSpan.isEntry()) {
+          /*
+           * Only add the profiling recheck on creating entry span,
+           * as the operation name could be overrided.
+           */
+          profilingRecheck(parentSpan, operationName);
+          parentSpan.setOperationName(operationName);
+          entrySpan = parentSpan;
+          return entrySpan.start();
+      } else {
+          entrySpan = new EntrySpan(
+              spanIdGenerator++, parentSpanId,
+              operationName, owner
+          );
+          entrySpan.start();
+          return push(entrySpan);
+      }
+  }
+  ```
+
+  * isLimitMechanismWorking
+
+    判断span的个数是否太多，如果为true，则不允许创建更多的span，则创建一个loopspan,入栈后直接返回
+
+  * 先从栈中弹出一个parentspan，如果为空则是第一个栈，设置spanid为-1，否则将弹出的parentspan的id作为一个parentid
+
+  * parentspandd的operationname被当前操作覆盖。赋值给entryspan，调用entryspan.start()的方法
+
+    注意这里从栈中拿出元素没有删除，所以不用重新放回去
+
+* createLocalSpan
+
+  ```
+  public AbstractSpan createLocalSpan(final String operationName) {
+      if (isLimitMechanismWorking()) {
+          NoopSpan span = new NoopSpan();
+          return push(span);
+      }
+      AbstractSpan parentSpan = peek();
+      final int parentSpanId = parentSpan == null ? -1 : parentSpan.getSpanId();
+      AbstractTracingSpan span = new LocalSpan(spanIdGenerator++, parentSpanId, operationName, this);
+      span.start();
+      return push(span);
+  }
+  ```
+
+  因为localspan没有复用逻辑，所以直接创建一个新的对象绑定一下父子关系就可以start然后放入到栈之中
+
+* createExitSpan
+
+  ```
+  public AbstractSpan createExitSpan(final String operationName, final String remotePeer) {
+      if (isLimitMechanismWorking()) {
+          NoopExitSpan span = new NoopExitSpan(remotePeer);
+          return push(span);
+      }
+  
+      AbstractSpan exitSpan;
+      AbstractSpan parentSpan = peek();
+      TracingContext owner = this;
+      if (parentSpan != null && parentSpan.isExit()) {
+          exitSpan = parentSpan;
+      } else {
+          final int parentSpanId = parentSpan == null ? -1 : parentSpan.getSpanId();
+          exitSpan = new ExitSpan(spanIdGenerator++, parentSpanId, operationName, remotePeer, owner);
+          push(exitSpan);
+      }
+      exitSpan.start();
+      return exitSpan;
+  }
+  ```
+
+  和entryspan类似
+
+* stopSpan
+
+  ```
+  /**
+   * Stop the given span, if and only if this one is the top element of {@link #activeSpanStack}. Because the tracing
+   * core must make sure the span must match in a stack module, like any program did.
+   *
+   * @param span to finish
+   */
+  @Override
+  public boolean stopSpan(AbstractSpan span) {
+      AbstractSpan lastSpan = peek();
+      if (lastSpan == span) {
+          if (lastSpan instanceof AbstractTracingSpan) {
+              AbstractTracingSpan toFinishSpan = (AbstractTracingSpan) lastSpan;
+              if (toFinishSpan.finish(segment)) {
+                  pop();
+              }
+          } else {
+              pop();
+          }
+      } else {
+          throw new IllegalStateException("Stopping the unexpected span = " + span);
+      }
+  
+      finish();
+  
+      return activeSpanStack.isEmpty();
+  }
+  ```
+
+  根据注释我们可以知道关闭span，必须要符合栈的逻辑，必须先关闭栈顶的元素。
+
+  * toFinishSpan.finish(segment)会将span中的计数发生变更
+  * 调用finish的方法，逻辑如下
+
+* finish();
+
+  这个是用来结束context的，这个方法需要判断栈是否空了，才会真正的结束，才会清理一些参数，并且做一些监听器的通知。所以栈没空调用没有关系。
+
+  ```
+  private void finish() {
+      if (isRunningInAsyncMode) {
+          asyncFinishLock.lock();
+      }
+      try {
+          boolean isFinishedInMainThread = activeSpanStack.isEmpty() && running;
+          if (isFinishedInMainThread) {
+              /*
+               * Notify after tracing finished in the main thread.
+               */
+              TracingThreadListenerManager.notifyFinish(this);
+          }
+  
+          if (isFinishedInMainThread && (!isRunningInAsyncMode || asyncSpanCounter == 0)) {
+              TraceSegment finishedSegment = segment.finish(isLimitMechanismWorking());
+              TracingContext.ListenerManager.notifyFinish(finishedSegment);
+              running = false;
+          }
+      } finally {
+          if (isRunningInAsyncMode) {
+              asyncFinishLock.unlock();
+          }
+      }
+  }
+  ```
+
+   segment.finish(isLimitMechanismWorking())。这个当满足所有的span都结束了，那么就可以通知结束segment了。
+
+  总结下来就做了两件事：
+
+  * 通知下性能监控
+  * 通知下segemtn结束
+
+* inject方法
+
+  ```
+  public void inject(AbstractSpan exitSpan, ContextCarrier carrier) {
+      if (!exitSpan.isExit()) {
+          throw new IllegalStateException("Inject can be done only in Exit Span");
+      }
+  
+      ExitTypeSpan spanWithPeer = (ExitTypeSpan) exitSpan;
+      String peer = spanWithPeer.getPeer();
+      if (StringUtil.isEmpty(peer)) {
+          throw new IllegalStateException("Exit span doesn't include meaningful peer information.");
+      }
+  
+      carrier.setTraceId(getReadablePrimaryTraceId());
+      carrier.setTraceSegmentId(this.segment.getTraceSegmentId());
+      carrier.setSpanId(exitSpan.getSpanId());
+      carrier.setParentService(Config.Agent.SERVICE_NAME);
+      carrier.setParentServiceInstance(Config.Agent.INSTANCE_NAME);
+      carrier.setParentEndpoint(first().getOperationName());
+      carrier.setAddressUsedAtClient(peer);
+  
+      this.correlationContext.inject(carrier);
+      this.extensionContext.inject(carrier);
+  }
+  ```
+
+  * 当前传入的span是exietspan，然后把当前上下文传到ContextCarrier之中，并传输给其它进程
+
+  * 这个方法只会在exitspan之中调用
+
+  * entryspan不可能做跨线程跨进程的访问，这里一定是exietspan
+
+  * 这个inject方法会封装carrier这个对象，设置一些基础信息
+
+    比如，parentspanid，parentservicename,ip等等
+
+  * firstspan永远指向栈底的span
+
+    carier对象的parentEndPoint字段会封装firstspan的操作名称
+
+* extract
+
+  用于提取跨进程调用的上下文信息
+
+  ```
+  public void extract(ContextCarrier carrier) {
+      TraceSegmentRef ref = new TraceSegmentRef(carrier);
+      this.segment.ref(ref);
+      this.segment.relatedGlobalTrace(new PropagatedTraceId(carrier.getTraceId()));
+      AbstractSpan span = this.activeSpan();
+      if (span instanceof EntrySpan) {
+          span.ref(ref);
+      }
+  
+      carrier.extractExtensionTo(this);
+      carrier.extractCorrelationTo(this);
+  }
+  ```
+
+  * 该方法时下一个segment调用的
+  * TraceSegmentRef ref = new TraceSegmentRef(carrier)封装当前segmett的traceSegment。
+  * 获取当前栈顶的entryspan设置ref的segment。
+
+  即绑定当前segment和上一个segment之间的关系。
+
+* capture
+
+  ```
+  public ContextSnapshot capture() {
+      ContextSnapshot snapshot = new ContextSnapshot(
+          segment.getTraceSegmentId(),
+          activeSpan().getSpanId(),
+          getPrimaryTraceId(),
+          first().getOperationName(),
+          this.correlationContext,
+          this.extensionContext
+      );
+  
+      return snapshot;
+  }
+  ```
+
+  跨线程调用，直接new 一个快照对象即可。
+
+* continued
+
+  也是从对象直接提取即可，不过也需要设置下引用关系
+
+  ```
+  public void continued(ContextSnapshot snapshot) {
+      if (snapshot.isValid()) {
+          TraceSegmentRef segmentRef = new TraceSegmentRef(snapshot);
+          this.segment.ref(segmentRef);
+          this.activeSpan().ref(segmentRef);
+          this.segment.relatedGlobalTrace(snapshot.getTraceId());
+          this.correlationContext.continued(snapshot);
+          this.extensionContext.continued(snapshot);
+          this.extensionContext.handle(this.activeSpan());
+      }
+  }
+  ```
+
+### 5.4. ContextCarrier
+
+这个时跨进程传输的时候封装的对象，主要维护了一些CarrierItem列表，这个是一个单项链表
+
+主要有：
+
+* CarrierItemHead
+
+  链表头
+
+* SW8CarrierItem
+
+  skywaking版本的item
+
+* SW8CorrelationCarrierItem
+
+* SW8ExtensionCarrierItem
+
+这些主要就是header不一样
