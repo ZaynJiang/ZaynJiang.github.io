@@ -1,0 +1,51 @@
+<mxfile host="65bd71144e">
+    <diagram id="rDEfCVFA9co9Iwv8oEo7" name="第 1 页">
+        <mxGraphModel dx="1124" dy="567" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" background="#ffffff" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="26" value="" style="rounded=0;whiteSpace=wrap;html=1;fontColor=#000000;fillColor=none;strokeColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="306" y="74" width="340" height="378" as="geometry"/>
+                </mxCell>
+                <mxCell id="6" value="&lt;font color=&quot;#000000&quot;&gt;doc&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;gradientColor=#ffd966;strokeColor=#d6b656;" parent="1" vertex="1">
+                    <mxGeometry x="125" y="243" width="118" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="17" value="" style="edgeStyle=none;html=1;fontColor=#000000;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="342" y="358" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="14" value="&lt;span style=&quot;color: rgb(0 , 0 , 0)&quot;&gt;hot节点&lt;/span&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;rounded=0;gradientColor=#ffd966;" parent="1" vertex="1">
+                    <mxGeometry x="318" y="93" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="18" value="&lt;span style=&quot;color: rgb(0 , 0 , 0)&quot;&gt;hot节点&lt;/span&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;rounded=0;gradientColor=#ffd966;" parent="1" vertex="1">
+                    <mxGeometry x="318" y="237" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="19" value="&lt;span style=&quot;color: rgb(0 , 0 , 0)&quot;&gt;hot节点&lt;/span&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;rounded=0;gradientColor=#ffd966;" parent="1" vertex="1">
+                    <mxGeometry x="318" y="166" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="20" value="&lt;span style=&quot;color: rgb(0 , 0 , 0)&quot;&gt;hot节点&lt;/span&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;rounded=0;gradientColor=#ffd966;" parent="1" vertex="1">
+                    <mxGeometry x="318" y="311" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="21" value="&lt;span style=&quot;color: rgb(0 , 0 , 0)&quot;&gt;hot节点&lt;/span&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;rounded=0;gradientColor=#ffd966;" parent="1" vertex="1">
+                    <mxGeometry x="318" y="385" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="29" value="" style="shape=flexArrow;endArrow=classic;html=1;fontColor=#000000;strokeColor=#666666;" parent="1" edge="1">
+                    <mxGeometry width="50" height="50" relative="1" as="geometry">
+                        <mxPoint x="252" y="262" as="sourcePoint"/>
+                        <mxPoint x="306" y="262" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="31" value="&lt;span style=&quot;color: rgb(0 , 0 , 0)&quot;&gt;warm节点&lt;/span&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;rounded=0;gradientColor=#ffd966;" vertex="1" parent="1">
+                    <mxGeometry x="501" y="132" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="32" value="&lt;span style=&quot;color: rgb(0 , 0 , 0)&quot;&gt;warm节点&lt;/span&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;rounded=0;gradientColor=#ffd966;" vertex="1" parent="1">
+                    <mxGeometry x="503" y="223" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="33" value="&lt;span style=&quot;color: rgb(0 , 0 , 0)&quot;&gt;warm节点&lt;/span&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;rounded=0;gradientColor=#ffd966;" vertex="1" parent="1">
+                    <mxGeometry x="503" y="317" width="120" height="60" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>
