@@ -211,6 +211,30 @@ CMS举例：
 
   ​	破坏第二个条件，他把这个要删除的引用记录下来，扫描结束之后，以灰色对象为根重新扫描一次。所以就像是快照一样，不管你删没删，其实最终还是会按照之前的关系重新来一次
 
+### 2.4. safepoint
+
+​	SafePoint是线程状态，表示线程目前处于一个稳定状态，可以停止或进行其他调度，GC等其他操作需要SafePoint。SafePoint的特定代码位置主要有：循环末尾、方法return前、方法call返回后、异常抛出位置等
+
+* **-XX:+PrintApplicationStoppedTime**（程序暂停了多少时间）**-XX:+PrintGCApplicationConcurrentTime**（两次连续暂停的时间间隔）  
+
+* **-XX:+PrintSafepointStatistics -XX:PrintSafepointStatisticsCount=1**
+
+  打印引起SafePoint的操作、线程运行情况等
+
+  如图所示，引起STW(Stop the World)的操作有Depotimize/GC/RevokeBias等，这些操作都需要等待程序处于SafePoint状态。
+
+  no  vm operation说明是一个保证安全点GuaranteedSafepoint（具体作用待续），默认每秒执行一次。
+
+  ![](safepoint诊断示例.png) 
+
+* UnlockDiagnosticVMOptions 
+
+  查看GuaranteedSafepoint的时间间隔
+
+* 设置间隔时间
+
+  -XX:GuaranteedSafepointInterval=0 (关闭) -XX:GuaranteedSafepointInterval=1000 (1000ms)
+
 ## 3. cms gc
 
 ### 3.1. 特点
