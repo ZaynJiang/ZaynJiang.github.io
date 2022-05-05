@@ -184,9 +184,9 @@ elasticsearch的部署节点类型如下：
 
 ## 3. 容量规划与调优
 
-### 3.1. 分片数量
+### 3.1. 分片
 
-​	我们知道当es集群的节点数大于索引的分片数时，集群将无法通过水平扩展提升集群的性能。而分片数过多，对于聚合查询以及集群的元数据管理也都有影响。总结下来分片数量较多具体优缺点为：
+​	我们知道当es集群的节点数大于索引的分片数时，集群将无法通过水平扩展提升集群的性能。而分片数过多，对于聚合查询以及集群的元数据管理也都有影响。我们可以总结为：
 
 * 分片数量较多优点：
 
@@ -217,9 +217,37 @@ elasticsearch的部署节点类型如下：
 
   单个分片不超过20G
 
-解释：
+避免使用非常大的分片，因为这会对群集从故障中恢复的能力产生负面影响。而每个分片也会消耗相应的文件句柄, 内存和CPU资源，分片太多会互相竞争，影响性能。
+
+主分片数一旦确定就无法更改，只能新建创建并对数据进行重新索引(reindex)，虽然reindex会比较耗时，但至少能保证你不会停机。所以我们一定要科学的设计分片数。
+
+这里摘录于官方关于分片大小的建议：
+
+* 小的分片会造成小的分段，从而会增加开销。我们的目的是将平均分片大小控制在几 GB 到几十 GB 之间。对于基于时间的数据的使用场景来说，通常将分片大小控制在 20GB 到 40GB 之间。
+
+* 由于每个分片的开销取决于分段的数量和大小，因此通过 forcemerge 操作强制将较小的分段合并为较大的分段，这样可以减少开销并提高查询性能。 理想情况下，一旦不再向索引写入数据，就应该这样做。 请注意，这是一项比较耗费性能和开销的操作，因此应该在非高峰时段执行。
+
+* 我们可以在节点上保留的分片数量与可用的堆内存成正比，但 Elasticsearch 没有强制的固定限制。 一个好的经验法则是确保每个节点的分片数量低于每GB堆内存配置20到25个分片。 因此，具有30GB堆内存的节点应该具有最多600-750个分片，但是低于该限制可以使其保持更好。 这通常有助于集群保持健康。
+
+* 如果担心数据的快速增长, 建议根据这条限制: ElasticSearch推荐的最大JVM堆空间 是 30~32G, 所以把分片最大容量限制为 30GB, 然后再对分片数量做合理估算。例如, 如果的数据能达到 200GB, 则最多分配7到8个分片。
+
+* 如果是基于日期的索引需求, 并且对索引数据的搜索场景非常少。
+
+  也许这些索引量将达到成百上千, 但每个索引的数据量只有1GB甚至更小对于这种类似场景, 建议是只需要为索引分配1个分片。如果使用ES7的默认配置(3个分片), 并且使用 Logstash 按天生成索引, 那么 6 个月下来, 拥有的分片数将达到 540个. 再多的话, 你的集群将难以工作--除非提供了更多(例如15个或更多)的节点。想一下, 大部分的 Logstash 用户并不会频繁的进行搜索, 甚至每分钟都不会有一次查询. 所以这种场景, 推荐更为经济使用的设置. 在这种场景下, 搜索性能并不是第一要素, 所以并不需要很多副本。 维护单个副本用于数据冗余已经足够。不过数据被不断载入到内存的比例相应也会变高。如果索引只需要一个分片, 那么使用 Logstash 的配置可以在 3 节点的集群中维持运行 6 个月。当然你至少需要使用 4GB 的内存, 不过建议使用 8GB, 因为在多数据云平台中使用 8GB 内存会有明显的网速以及更少的资源共享。
 
 #### 3.1.2.  副本分片
+
+主分片与副本都能处理查询请求，它们的唯一区别在于只有主分片才能处理索引请求。副本对搜索性能非常重要，同时用户也可在任何时候添加或删除副本。额外的副本能给带来更大的容量，更高的呑吐能力及更强的故障恢复能力
+
+#### 3.1.3. 小结
+
+根据实际经验我们稍微总结下：
+
+- 对于数据量较小（100GB以下）的index，往往写入压力查询压力相对较低，一般设置3~5个shard，numberofreplicas设置为1即可（也就是一主一从，共两副本） 。
+- 对于数据量较大（100GB以上）的index：
+  - 一般把单个shard的数据量控制在（20GB~50GB）
+  - 让index压力分摊至多个节点：可通过index.routing.allocation.totalshardsper_node参数，强制限定一个节点上该index的shard数量，让shard尽量分配到不同节点上
+  - 综合考虑整个index的shard数量，如果shard数量（不包括副本）超过50个，就很可能引发拒绝率上升的问题，此时可考虑把该index拆分为多个独立的index，分摊数据量，同时配合routing使用，降低每个查询需要访问的shard数量
 
 ### 3.2. 集群配置
 
@@ -254,6 +282,12 @@ elasticsearch的部署节点类型如下：
 
 * 其它的配置尽量不要修改，使用默认的配置。
 
+  * 适当增大写入buffer和bulk队列长度，提高写入性能和稳定性
+
+    ```
+    indices.memory.index_buffer_size: 15%thread_pool.bulk.queue_size: 1024
+    ```
+
 这里是官方的jvm推荐配置链接：https://www.elastic.co/cn/blog/a-heap-of-trouble
 
 #### 3.2.2. 集群节点数
@@ -279,7 +313,7 @@ es的节点提供查询的时候使用较多的内存来存储查询缓存，es�
 
 #### 3.2.3. 网络
 
-* 当个集群不要跨机房部署
+* 单个集群不要跨机房部署
 * 如果有多块网卡，可以将tranport和http绑定到不同的网卡上，可以起到隔离的作用
 * 使用负载聚合到协调节点和ingest node节点
 
@@ -287,10 +321,30 @@ es的节点提供查询的时候使用较多的内存来存储查询缓存，es�
 
 前面也提到过，数据节点推荐使用ssd
 
-### 3.3. 通用设置
+#### 3.2.5. 通用设置
 
 * 关闭动态索引创建功能
 * 通过模板设置白名单
+
+#### 3.2.6. 其它优化
+
+* Linux参数调优修改系统资源限制# 单用户可以打开的最大文件数量，可以设置为官方推荐的65536或更大些echo
+
+* 设置内存熔断参数，防止写入或查询压力过高导致OOM
+
+  ```
+  indices.breaker.total.limit
+  indices.breaker.request.limit
+  indices.breaker.fielddata.limit
+  ```
+
+* 索引、分片等信息都被维护在clusterstate对象中，由master管理，并分发给各个节点。当集群中的index/shard过多，创建索引等基础操作会变成越来越慢，而且master节点的不稳定会影响整体集群的可用性。可以考虑：
+  * 拆分独立独有的master节点
+  * 降低数据量较小的index的shard数量
+  * 把一些有关联的index合并成一个index
+  * 数据按某个维度做拆分，写入多个集群
+
+
 
 ### 3.3. 写入和查询优化
 
@@ -301,10 +355,16 @@ es的节点提供查询的时候使用较多的内存来存储查询缓存，es�
 * 客户端：
 
   * 通过压测确定每次写入的文档数量。一般情况：
+
     * 单个bulk请求数据两不要太大，官方建议5-15mb
     * 写入请求超时时间建议60s以上
     * 写入尽量不要一直写入同一节点，轮询达到不同节点。
+
   * 进行多线程写入，最好的情况时动态调整，如果http429，此时可以少写入点，不是可以多写点
+
+  * 写入数据不指定_id，让ES自动产生
+
+    当用户显示指定id写入数据时，ES会先发起查询来确定index中是否已经有相同id的doc存在，若有则先删除原有doc再写入新doc。这样每次写入时，ES都会耗费一定的资源做查询。如果用户写入数据时不指定doc，ES则通过内部算法产生一个随机的id，并且保证id的唯一性，这样就可以跳过前面查询id的步骤，提高写入效率
 
 * server：
 
@@ -327,36 +387,45 @@ es的节点提供查询的时候使用较多的内存来存储查询缓存，es�
   * index_options控制在创建倒排索引时，哪些内容会被条件到倒排索引中，只添加有用的，这样能很大减少cpu的开销
   * 关闭_source，减少io操作。但是source字段用来存储文档的原始信息，如果我们以后可能reindex，那就必须要有这个字段 
 
+* 设置30s refresh，降低lucene生成频次，资源占用降低提升写入性能，但是损耗实时性
+
+* total_shards_per_node控制分片集中到某一节点，避免热点问题
+
+* translong落盘异步化，提升性能，损耗灾备能力
+
+* dynamic设置false，避免生成多余的分词字段，需要自行确定映射
+
+* merge并发控制。ES的一个index由多个shard组成，而一个shard其实就是一个Lucene的index，它又由多个segment组成，且Lucene会不断地把一些小的segment合并成一个大的segment，这个过程被称为merge。我们可以通过调整并发度来减少这一步占用的资源操作。
+
+  ```
+  index.merge.scheduler.max_thread_count
+  ```
+
 这里可以针对myindex索引优化的示例：
 
 ```
-    PUT myindex {
-    	"settings": {
-    		"index" :{
-    			"refresh_interval" : "30s","number_of_shards" :"2"
-    		},
-    		"routing": {
-    			"allocation": {
-    				"total_shards_per_node" :"3"
-    		    }
-    		},
-    		"translog" :{
-    			"sync_interval" : "30s",
-    			"durability" : "async"
-    		},
-    		number_of_replicas" : 0
-    	}
-    	"mappings": {
-    		"dynamic" : false,
-    		"properties" :{}
-    	}
-    }
+PUT myindex {
+	"settings": {
+		"index" :{
+			"refresh_interval" : "30s","number_of_shards" :"2"
+		},
+		"routing": {
+			"allocation": {
+				"total_shards_per_node" :"3"
+		    }
+		},
+		"translog" :{
+			"sync_interval" : "30s",
+			"durability" : "async"
+		},
+		number_of_replicas" : 0
+	}
+	"mappings": {
+		"dynamic" : false,
+		"properties" :{}
+	}
+}
 ```
-
-* 设置30s refresh，降低lucene生成频次，资源占用降低提升写入性能，但是损耗实时性
-* total_shards_per_node控制分片集中到某一节点，避免热点问题
-* translong落盘异步化，提升性能，损耗灾备能力
-* dynamic设置false，避免生成多余的分词字段，需要自行确定映射
 
 #### 3.3.2. 查询优化
 
@@ -549,6 +618,124 @@ GET /_nodes/<node_id>/hot_threads
 
 #### 4.3.2. 内存使用率过高
 
+**1）内存中的缓存：**
+
+ Elasticsearch 的缓存主要分成三大类
+
+![](es的缓存.png) 
+
+* Node Query Cache （Filter Context）
+
+  * 每一个节点有一个 Node Query 缓存
+
+  * 由该节点的所有 Shard 共享，只缓存  Filter Context 相关内容
+
+  * Cache 采用 LRU 算法，不会被jvm gc
+
+  * Segment 级缓存命中的结果。Segment 被合并后，缓存会失效
+
+  * 缓存的配置项设置为
+
+    ```
+    index.queries.cache.enabled: true
+    indices.queries.cache.size:10%
+    ```
+
+* Shard Query Cache （Cache Query的结果）
+
+  * 缓存每个分片上的查询结果
+
+    只会缓存设置了 size=0 的查询对应的结果。不会缓存hits。但是会缓存 Aggregations 和 Suggestions
+
+  * Cache Key
+
+    LRU 算法，将整个 JSON 查询串作为 Key，与 JSON 对象的顺序相关，不会被jvm gc
+
+  * 分片 Refresh 时候，Shard Request Cache 会失效。如果 Shard 对应的数据频繁发生变化，该缓存的效
+    率会很差
+
+  * 配置项
+
+    ```
+    indices.requests.cache.size: “1%”
+    ```
+
+* Fielddata Cache
+
+  * 除了 Text 类型，默认都采用 doc_values。节约了内存
+
+  * Aggregation 的 Global ordinals 也保存在 Fielddata cache 中
+
+  * Text 类型的字段需要打开 Fileddata 才能对其进行聚合和排序
+
+    Text 经过分词，排序和聚合效果不佳，建议不要轻易使用
+
+  * Segment 被合并后，会失效
+
+  * 配置项，调整该参数避免产生 GC （默认无限制）：
+
+    ```
+     Indices.fielddata.cache.size
+    ```
+
+* Segments Cache
+
+  （segments FST数据的缓存），为了加速查询，FST 永驻堆内内存，无法被 GC 回收。该部分内存无法设置大小，长期占用 50% ~ 70% 的堆内存，只能通过delete index，close index以及force-merge index释放内存
+
+   ES 底层存储采用 Lucene（搜索引擎），写入时会根据原始数据的内容，分词，然后生成倒排索引。查询时，先通过  查询倒排索引找到数据地址（DocID）），再读取原始数据（行存数据、列存数据）。但由于 Lucene 会为原始数据中的每个词都生成倒排索引，数据量较大。所以倒排索引对应的倒排表被存放在磁盘上。这样如果每次查询都直接读取磁盘上的倒排表，再查询目标关键词，会有很多次磁盘 IO，严重影响查询性能。为了解磁盘 IO 问题，Lucene 引入排索引的二级索引 FST [Finite State Transducer] 。原理上可以理解为前缀树，加速查询
+
+**2）内存诊断：**
+
+**a. 节点的内存查看：**
+
+```
+GET _cat/nodes?v
+GET _nodes/stats/indices?pretty
+GET _cat/nodes?v&h=name,queryCacheMemory,queryCacheEvictions,requestCacheMemory,request CacheHitCount,request_cache.miss_count
+GET _cat/nodes?h=name,port,segments.memory,segments.index_writer_memory,fielddata.memory_size,query_cache.memory_size,request_cache.memory_size&v
+```
+
+**b. 问题分析:**
+
+* 集群整体响应缓慢，也没有特别多的数据读写。但是发现节点在持续进行 Full GC
+
+* Segments 个数过多，导致 full GC
+
+  如果sements过多会导致：
+
+  * 查看 Elasticsearch 的内存使用，发现 segments.memory 占用很大空间
+  * 通过 force merge，把 segments 合并成一个
+  * 对于不在写入和更新的索引，可以将其设置成只读。同时，进行 force merge 操作。如
+    果问题依然存在，则需要考虑扩容。此外，对索引进行 force merge ，还可以减少对
+    global_ordinals 数据结构的构建，减少对 fielddata cache 的开销
+
+* Field data cache 过大，导致 full GC
+
+    Field data cache 过大，导致 full GC
+  ●  分析：查看 Elasticsearch 的内存使用，发现 fielddata.memory.size 占用很大空间。同时，
+  数据不存在写入和更新，也执行过 segments merge。
+  ●  解决：将 indices.fielddata.cache.size 设小，重启节点，堆内存恢复正常
+  ●  建议：Field data cache 的构建比较重，Elasticsearch 不会主动释放，所以这个值应该设置
+  的保守一些。如果业务上确实有所需要，可以通过增加节点，扩容解决
+
+*  复杂的嵌套聚合，导致集群 full GC
+
+    复杂的嵌套聚合，导致集群 full GC
+  ●  现象：节点响应缓慢，持续进行 Full GC
+  ●  分析：导出 Dump 分析。发现内存中有大量 bucket 对象，查看 日志，发现复杂的嵌套聚合
+  ●  解决：优化聚合
+  ●  建议：在大量数据集上进行嵌套聚合查询，需要很大的堆内存来完成。如果业务场景确实需要。
+  则需要增加硬件进行扩展。同时，为了避免这类查询影响整个集群，需要设置 Circuit Breaker
+  和 search.max_buckets 的数值
+
+**3）断路器**
+
+es有多种断路器，我们可以合理使用，避免不合理操作引发的 OOM，每个断路器可以指定内存使用的限制。
+
+关于es的断路器使用可以参考官网文档：
+
+https://www.elastic.co/cn/blog/improving-node-resiliency-with-the-real-memory-circuit-breaker
+
 ### 4.4. 常用工具
 
 #### 4.4.1. iostat命令
@@ -604,8 +791,6 @@ GET /_nodes/<node_id>/hot_threads
 我们可以重点关注vmeff，当为0和接近100时说明内存够用，其它情况页面回收效率过低，内存也不够。
 
 **PS：我们需要关闭内存交换，内存交换会严重损害性能**。
-
-
 
 #### 4.4.3.  cpu
 
