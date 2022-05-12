@@ -344,3 +344,340 @@ rehash 的触发条件跟**负载因子（load factor）**有关系：
 
 - 当负载因子大于等于 1 ，并且 Redis 没有在执行 bgsave 命令或者 bgrewiteaof 命令，也就是没有执行 RDB 快照或没有进行 AOF 重写的时候，就会进行 rehash 操作。
 - 当负载因子大于等于 5 时，此时说明哈希冲突非常严重了，不管有没有有在执行 RDB 快照或 AOF 重写，都会强制进行 rehash 操作。
+
+## 6. 跳跃表
+
+​	跳跃表（skiplist）是一种随机化的数据结构，由 **William Pugh** 在论文《Skip lists: a probabilistic alternative to balanced trees》中提出，是一种可以与平衡树媲美的层次化链表结构——查找、删除、添加等操作都可以在对数期望时间下完成。
+
+如下图所示为跳跃表的模型：
+
+![](跳跃表模型.png) 
+
+​	redis的**有序列表 zset** 的数据结构，它类似于 Java 中的 **SortedSet** 和 **HashMap** 的结合体，一方面它是一个 set 保证了内部 value 的唯一性，另一方面又可以给每个 value 赋予一个排序的权重值 score，来达到 **排序** 的目的。它的内部实现就依赖了一种叫做 **「跳跃列表」** 的数据结构。
+
+### 6.1.  为什么要使用跳跃表
+
+zset 要支持随机的插入和删除，使用数组不合适，单纯使用链表查找为o(n)。而对于**红黑树/ 平衡树** 这样的树形结构，也有一定的缺陷不适合zset的场景：
+
+* **性能考虑：** 在高并发的情况下，树形结构需要执行一些类似于 rebalance 这样的可能涉及整棵树的操作，相对来说跳跃表的变化只涉及局部 *(下面详细说)*；
+
+* **实现考虑：** 在复杂度与红黑树相同的情况下，跳跃表实现起来更简单，看起来也更加直观；
+
+### 6.2. 跳跃表查找过程
+
+![](跳跃表查找过程.png) 
+
+当链表足够长，这样的多层链表结构可以帮助我们跳过很多下层节点，从而加快查找的效率
+
+### 6.3. 跳跃表改进
+
+​	每一层链表的节点个数，是下面一层的节点个数的一半，这样查找过程就非常类似于一个二分查找，使得查找的时间复杂度可以降低到 *O(logn)*
+
+​	但是，这种方法在插入数据的时候有很大的问题。新插入一个节点之后，就会打乱上下相邻两层链表上节点个数严格的 2:1 的对应关系。如果要维持这种对应关系，就必须把新插入的节点后面的所有节点 *（也包括新插入的节点）* 重新进行调整，这会让时间复杂度重新蜕化成 *O(n)*。删除数据也有同样的问题。
+
+​	**skiplist** 为了避免这一问题，它不要求上下相邻两层链表之间的节点个数有严格的对应关系，而是 **为每个节点随机出一个层数(level)**。比如，一个节点随机出的层数是 3，那么就把它链入到第 1 层到第 3 层这三层链表中。
+
+![image-20220511105319783](image-20220511105319783-16522376016231.png) 
+
+每一个节点的层数（level）是随机出来的，而且新插入一个节点并不会影响到其他节点的层数，因此，**插入操作只需要修改节点前后的指针，而不需要对多个节点都进行调整**，这就降低了插入操作的复杂度。
+
+假设从我们刚才创建的这个结构中查找 23 这个不存在的数就非常的容易。
+
+### 6.4. 跳跃表实现
+
+Redis 中的跳跃表由 `server.h/zskiplistNode` 和 `server.h/zskiplist` 两个结构定义，前者为跳跃表节点，后者则保存了跳跃节点的相关信息，同之前的 `集合 list` 结构类似，其实只有 `zskiplistNode` 就可以实现了，但是引入后者是为了更加方便的操作：
+
+```
+/* ZSETs use a specialized version of Skiplists */
+typedefstruct zskiplistNode {
+    // value
+    sds ele;
+    // 分值
+    double score;
+    // 后退指针
+    struct zskiplistNode *backward;
+    // 层
+    struct zskiplistLevel {
+        // 前进指针
+        struct zskiplistNode *forward;
+        // 跨度
+        unsignedlong span;
+    } level[];
+} zskiplistNode;
+
+typedefstruct zskiplist {
+    // 跳跃表头指针
+    struct zskiplistNode *header, *tail;
+    // 表中节点的数量
+    unsignedlong length;
+    // 表中层数最大的节点的层数
+    int level;
+} zskiplist;
+```
+
+#### 6.4.1. 随机层数
+
+```
+int zslRandomLevel(void) {
+    int level = 1;
+    while ((random()&0xFFFF) < (ZSKIPLIST_P * 0xFFFF))
+        level += 1;
+    return (level<ZSKIPLIST_MAXLEVEL) ? level : ZSKIPLIST_MAXLEVEL;
+}
+```
+
+直观上期望的目标是 50% 的概率被分配到 `Level 1`，25% 的概率被分配到 `Level 2`，12.5% 的概率被分配到 `Level 3`，以此类推...有 2-63 的概率被分配到最顶层，因为这里每一层的晋升率都是 50%。
+
+**Redis 跳跃表默认允许最大的层数是 32**，被源码中 `ZSKIPLIST_MAXLEVEL` 定义，当 `Level[0]` 有 264 个元素时，才能达到 32 层，所以定义 32 完全够用了
+
+#### 6.4.2. 创建跳跃表
+
+在源码中的 `t_zset.c/zslCreate` 中被定义：
+
+```
+zskiplist *zslCreate(void) {
+    int j;
+    zskiplist *zsl;
+
+    // 申请内存空间
+    zsl = zmalloc(sizeof(*zsl));
+    // 初始化层数为 1
+    zsl->level = 1;
+    // 初始化长度为 0
+    zsl->length = 0;
+    // 创建一个层数为 32，分数为 0，没有 value 值的跳跃表头节点
+    zsl->header = zslCreateNode(ZSKIPLIST_MAXLEVEL,0,NULL);
+    
+    // 跳跃表头节点初始化
+    for (j = 0; j < ZSKIPLIST_MAXLEVEL; j++) {
+        // 将跳跃表头节点的所有前进指针 forward 设置为 NULL
+        zsl->header->level[j].forward = NULL;
+        // 将跳跃表头节点的所有跨度 span 设置为 0
+        zsl->header->level[j].span = 0;
+    }
+    // 跳跃表头节点的后退指针 backward 置为 NULL
+    zsl->header->backward = NULL;
+    // 表头指向跳跃表尾节点的指针置为 NULL
+    zsl->tail = NULL;
+    return zsl;
+}
+```
+
+即会初始化如下的结构图：
+
+![image-20220511111523930](image-20220511111523930-16522389251122.png) 
+
+#### 6.4.3. 插入节点
+
+整体思路：
+
+* 找到当前我需要插入的位置 *（其中包括相同 score 时的处理）*；
+
+* 创建新节点，调整前后的指针指向，完成插入；
+
+##### 6.4.3.1. 声明需要存储的变量
+
+```
+// 存储搜索路径
+zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
+// 存储经过的节点跨度
+unsignedint rank[ZSKIPLIST_MAXLEVEL];
+int i, level;
+```
+
+##### 6.4.3.2. 搜索当前节点插入位置
+
+```
+serverAssert(!isnan(score));
+x = zsl->header;
+// 逐步降级寻找目标节点，得到 "搜索路径"
+for (i = zsl->level-1; i >= 0; i--) {
+    /* store rank that is crossed to reach the insert position */
+    rank[i] = i == (zsl->level-1) ? 0 : rank[i+1];
+    // 如果 score 相等，还需要比较 value 值
+    while (x->level[i].forward &&
+            (x->level[i].forward->score < score ||
+                (x->level[i].forward->score == score &&
+                sdscmp(x->level[i].forward->ele,ele) < 0)))
+    {
+        rank[i] += x->level[i].span;
+        x = x->level[i].forward;
+    }
+    // 记录 "搜索路径"
+    update[i] = x;
+}
+```
+
+**讨论：** 有一种极端的情况，就是跳跃表中的所有 score 值都是一样，zset 的查找性能会不会退化为 O(n) 呢？
+
+从上面的源码中我们可以发现 zset 的排序元素不只是看 score 值，也会比较 value 值 *（字符串比较）*
+
+##### 6.4.3.3. 生成插入节点
+
+```
+/* we assume the element is not already inside, since we allow duplicated
+ * scores, reinserting the same element should never happen since the
+ * caller of zslInsert() should test in the hash table if the element is
+ * already inside or not. */
+level = zslRandomLevel();
+// 如果随机生成的 level 超过了当前最大 level 需要更新跳跃表的信息
+if (level > zsl->level) {
+    for (i = zsl->level; i < level; i++) {
+        rank[i] = 0;
+        update[i] = zsl->header;
+        update[i]->level[i].span = zsl->length;
+    }
+    zsl->level = level;
+}
+// 创建新节点
+x = zslCreateNode(level,score,ele);
+```
+
+##### 6.4.3.4. 重排前向指针
+
+```
+for (i = 0; i < level; i++) {
+    x->level[i].forward = update[i]->level[i].forward;
+    update[i]->level[i].forward = x;
+
+    /* update span covered by update[i] as x is inserted here */
+    x->level[i].span = update[i]->level[i].span - (rank[0] - rank[i]);
+    update[i]->level[i].span = (rank[0] - rank[i]) + 1;
+}
+
+/* increment span for untouched levels */
+for (i = level; i < zsl->level; i++) {
+    update[i]->level[i].span++;
+}
+```
+
+##### 6.4.3.5. 重排后向指针并返回
+
+```
+x->backward = (update[0] == zsl->header) ? NULL : update[0];
+if (x->level[0].forward)
+    x->level[0].forward->backward = x;
+else
+    zsl->tail = x;
+zsl->length++;
+return x;
+```
+
+### 6.4.4. 节点删除实现
+
+删除过程由源码中的 `t_zset.c/zslDeleteNode` 定义，和插入过程类似，都需要先把这个 **"搜索路径"** 找出来，然后对于每个层的相关节点重排一下前向后向指针，同时还要注意更新一下最高层数 `maxLevel`，直接放源码 *(如果理解了插入这里还是很容易理解的)*：
+
+```
+/* Internal function used by zslDelete, zslDeleteByScore and zslDeleteByRank */
+void zslDeleteNode(zskiplist *zsl, zskiplistNode *x, zskiplistNode **update) {
+    int i;
+    for (i = 0; i < zsl->level; i++) {
+        if (update[i]->level[i].forward == x) {
+            update[i]->level[i].span += x->level[i].span - 1;
+            update[i]->level[i].forward = x->level[i].forward;
+        } else {
+            update[i]->level[i].span -= 1;
+        }
+    }
+    if (x->level[0].forward) {
+        x->level[0].forward->backward = x->backward;
+    } else {
+        zsl->tail = x->backward;
+    }
+    while(zsl->level > 1 && zsl->header->level[zsl->level-1].forward == NULL)
+        zsl->level--;
+    zsl->length--;
+}
+
+/* Delete an element with matching score/element from the skiplist.
+ * The function returns 1 if the node was found and deleted, otherwise
+ * 0 is returned.
+ *
+ * If 'node' is NULL the deleted node is freed by zslFreeNode(), otherwise
+ * it is not freed (but just unlinked) and *node is set to the node pointer,
+ * so that it is possible for the caller to reuse the node (including the
+ * referenced SDS string at node->ele). */
+int zslDelete(zskiplist *zsl, double score, sds ele, zskiplistNode **node) {
+    zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
+    int i;
+
+    x = zsl->header;
+    for (i = zsl->level-1; i >= 0; i--) {
+        while (x->level[i].forward &&
+                (x->level[i].forward->score < score ||
+                    (x->level[i].forward->score == score &&
+                     sdscmp(x->level[i].forward->ele,ele) < 0)))
+        {
+            x = x->level[i].forward;
+        }
+        update[i] = x;
+    }
+    /* We may have multiple elements with the same score, what we need
+     * is to find the element with both the right score and object. */
+    x = x->level[0].forward;
+    if (x && score == x->score && sdscmp(x->ele,ele) == 0) {
+        zslDeleteNode(zsl, x, update);
+        if (!node)
+            zslFreeNode(x);
+        else
+            *node = x;
+        return1;
+    }
+    return0; /* not found */
+}
+```
+
+### 6.4.5.节点更新实现
+
+当我们调用 `ZADD` 方法时，如果对应的 value 不存在，那就是插入过程，如果这个 value 已经存在，只是调整一下 score 的值，那就需要走一个更新流程。
+
+假设这个新的 score 值并不会带来排序上的变化，那么就不需要调整位置，直接修改元素的 score 值就可以了，但是如果排序位置改变了，那就需要调整位置，该如何调整呢？
+
+从源码 `t_zset.c/zsetAdd` 函数 `1350` 行左右可以看到，Redis 采用了一个非常简单的策略：
+
+```
+/* Remove and re-insert when score changed. */
+if (score != curscore) {
+    zobj->ptr = zzlDelete(zobj->ptr,eptr);
+    zobj->ptr = zzlInsert(zobj->ptr,ele,score);
+    *flags |= ZADD_UPDATED;
+}
+```
+
+**把这个元素删除再插入这个**，需要经过两次路径搜索，从这一点上来看，Redis 的 `ZADD` 代码似乎还有进一步优化的空间。
+
+### 6.4.6.元素排名的实现
+
+跳跃表本身是有序的，Redis 在 skiplist 的 forward 指针上进行了优化，给每一个 forward 指针都增加了 `span` 属性，用来 **表示从前一个节点沿着当前层的 forward 指针跳到当前这个节点中间会跳过多少个节点**。在上面的源码中我们也可以看到 Redis 在插入、删除操作时都会小心翼翼地更新 `span` 值的大小。
+
+所以，沿着 **"搜索路径"**，把所有经过节点的跨度 `span` 值进行累加就可以算出当前元素的最终 rank 值了：
+
+```
+/* Find the rank for an element by both score and key.
+ * Returns 0 when the element cannot be found, rank otherwise.
+ * Note that the rank is 1-based due to the span of zsl->header to the
+ * first element. */
+unsigned long zslGetRank(zskiplist *zsl, double score, sds ele) {
+    zskiplistNode *x;
+    unsignedlong rank = 0;
+    int i;
+
+    x = zsl->header;
+    for (i = zsl->level-1; i >= 0; i--) {
+        while (x->level[i].forward &&
+            (x->level[i].forward->score < score ||
+                (x->level[i].forward->score == score &&
+                sdscmp(x->level[i].forward->ele,ele) <= 0))) {
+            // span 累加
+            rank += x->level[i].span;
+            x = x->level[i].forward;
+        }
+
+        /* x might be equal to zsl->header, so test if obj is non-NULL */
+        if (x->ele && sdscmp(x->ele,ele) == 0) {
+            return rank;
+        }
+    }
+    return0;
+}
+```
