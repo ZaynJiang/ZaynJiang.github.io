@@ -216,4 +216,258 @@ skywalking上开发一些功能的时候，它的后端是采用GraphQL
 
 ## 2. skywaking使用graphQL
 
+Skywalking-OAP中GraphQL代码逻辑主要包-query-graphql-plugin下，以Mertrics信息的查询为例进行GraphQL
+
+### 2.1. MetricsValues
+
+oap-server/server-core/src/main/java/org/apache/skywalking/oap/srver/core/query/type/MetricsValues.java
+
+这个为查询数据结构
+
+```
+public class MetricsValues {
+    private String label;
+    private IntValues values = new IntValues();
+}
+```
+
+### 2.2. 定义查询服务
+
+当前的查询Service和Dao结合进行数据库相关信息查询，和GraphQL无任何关系
+
+oap-server/server-core/src/main/java/org/apache/skywalking/oap/server/core/query/MetricsQueryService.java
+
+```
+@Slf4j
+public class MetricsQueryService implements Service {
+  ......
+
+    /**
+     * Read time-series values in the duration of required metrics
+     */
+    public MetricsValues readMetricsValues(MetricsCondition condition, Duration duration) throws IOException {
+        return getMetricQueryDAO().readMetricsValues(
+            condition, ValueColumnMetadata.INSTANCE.getValueCName(condition.getName()), duration);
+    }
+
+    /**
+     * Read value in the given time duration, usually as a linear.
+     *
+     * @param labels the labels you need to query.
+     */
+    public List<MetricsValues> readLabeledMetricsValues(MetricsCondition condition,
+                                                        List<String> labels,
+                                                        Duration duration) throws IOException {
+        return getMetricQueryDAO().readLabeledMetricsValues(
+            condition, ValueColumnMetadata.INSTANCE.getValueCName(condition.getName()), labels, duration);
+    }
+
+  ......
+}
+```
+
+### 2.3. GraphQL查询接口
+
+GraphQL是通过实现GraphQLQueryResolver来实现类似MVC中Controller层的代码逻辑 位置：
+
+oap-server/server-query-plugin/query-graphql-plugin/src/main/java/org/apache/skywalking/oap/query/graphql/resolver/MetricsQuery.java
+
+![image-20220526162724106](image-20220526162724106.png) 
+
+### 2.4. 初始化GraphQL 
+
+oap-server/server-query-plugin/query-graphql-plugin/src/main/java/org/apache/skywalking/oap/query/graphql/GraphQLQueryProvider.java
+
+```
+    GraphQLSchema schema = SchemaParser.newParser()
+                                           .file("query-protocol/common.graphqls")
+                                           .resolvers(new Query(), new Mutation(), new HealthQuery(getManager()))
+                                           .file("query-protocol/metadata.graphqls")
+                                           .resolvers(new MetadataQuery(getManager()))
+                                            // ...省略中间这一大堆重复代码
+                                           .file("query-protocol/event.graphqls")
+                                           .resolvers(new EventQuery(getManager()))
+                                           .build()
+                                           .makeExecutableSchema();
+        this.graphQL = GraphQL.newGraphQL(schema).build();
+
+```
+
+加载所有module时，QueryMoulde初始化了GraphQL实例
+
+### 2.5. 嵌入到http server
+
+初始好了GraphQL实例，需要嵌套到一个Http Server里面。代码如下，还是在GraphQLProvider类里面
+
+```
+    public void start() throws ServiceNotProvidedException, ModuleStartException {
+        JettyHandlerRegister service = getManager().find(CoreModule.NAME)
+                                                   .provider()
+                                                   .getService(JettyHandlerRegister.class);
+        service.addHandler(new GraphQLQueryHandler(config.getPath(), graphQL));
+    }
+```
+
+找到http的服务，然后添加为一个handler
+
+而GraphQLQueryHandler为
+
+```
+
+@RequiredArgsConstructor
+public class GraphQLQueryHandler extends JettyJsonHandler {
+ 
+    @Override
+    protected JsonElement doGet(HttpServletRequest req) {
+        // 不支持GET请求
+        throw new UnsupportedOperationException("GraphQL only supports POST method");
+    }
+ 
+    @Override
+    protected JsonElement doPost(HttpServletRequest req) throws IOException {
+        BufferedReader reader = new BufferedReader(new InputStreamReader(req.getInputStream()));
+        String line;
+        StringBuilder request = new StringBuilder();
+        while ((line = reader.readLine()) != null) {
+            request.append(line);
+        }
+ 
+        JsonObject requestJson = gson.fromJson(request.toString(), JsonObject.class);
+        // 参数解析完毕，进行实际调用
+        return execute(requestJson.get(QUERY)
+                                  .getAsString(), gson.fromJson(requestJson.get(VARIABLES), mapOfStringObjectType));
+    }
+ 
+    private JsonObject execute(String request, Map<String, Object> variables) {
+        try {
+            ExecutionInput executionInput = ExecutionInput.newExecutionInput()
+                                                          .query(request)
+                                                          .variables(variables)
+                                                          .build();
+            ExecutionResult executionResult = graphQL.execute(executionInput);
+            LOGGER.debug("Execution result is {}", executionResult);
+            Object data = executionResult.getData();
+            List<GraphQLError> errors = executionResult.getErrors();
+            JsonObject jsonObject = new JsonObject();
+            if (data != null) {
+                // 调用结果
+                jsonObject.add(DATA, gson.fromJson(gson.toJson(data), JsonObject.class));
+            }
+ 
+            // 异常处理
+            if (CollectionUtils.isNotEmpty(errors)) {
+                JsonArray errorArray = new JsonArray();
+                errors.forEach(error -> {
+                    JsonObject errorJson = new JsonObject();
+                    errorJson.addProperty(MESSAGE, error.getMessage());
+                    errorArray.add(errorJson);
+                });
+                jsonObject.add(ERRORS, errorArray);
+            }
+            return jsonObject;
+        } catch (final Throwable e) {
+            // 异常处理的代码，删除了
+            return jsonObject;
+        }
+    }
+}
+```
+
+
+
+### 2.6. 定义scheme
+
+位于oap-server/server-query-plugin/query-graphql-plugin/src/main/resources/query-protocol/metrics-v2.graphql
+
+```
+type MetricsValues {
+    # Could be null if no label assigned in the query condition
+    label: String
+    # Values of this label value.
+    values: IntValues
+}
+```
+
+![image-20220526163148869](image-20220526163148869.png) 
+
+和MetricsQuery中readMetricsValues定义完全一致
+
+```
+extend type Query {
+    ...
+    ...
+
+    # Read value in the given time duration, usually as a linear.
+    # labels: the labels you need to query.
+    readMetricsValues(condition: MetricsCondition!, duration: Duration!): MetricsValues!
+    ...
+    ...
+}
+```
+
+### 2.7. 查询测试
+
+测试,工具-GraphQL Playground 查询语句
+
+**查询语句：**
+
+```
+query queryData($condition: MetricsCondition!, $duration: Duration!) {
+ 	readMetricsValues: readMetricsValues(condition: $condition, duration: $duration) {
+    label
+    values {
+      values {value}
+    }
+  }
+}
+```
+
+**查询条件：**
+
+```
+{
+  "duration": {
+    "start": "2022-04-24 0912", 
+    "end": "2022-04-24 1352", 
+    "step": "MINUTE"
+  },
+  "condition": 
+  {
+    "name": "service_resp_time", 
+    "entity": {
+      "scope": "All", 
+      "normal": true
+    }
+  }
+}
+```
+
+**查询结果：**
+
+```
+{
+  "data": {
+    "readMetricsValues": {
+      "label": null,
+      "values": {
+        "values": [
+          {
+            "value": 0
+          },
+        ...
+        ]
+      }
+    }
+  }
+}
+```
+
+![image-20220526163900852](image-20220526163900852.png) 
+
+
+
+### 2.8. 查询测试
+
+
+
 QueryModule
