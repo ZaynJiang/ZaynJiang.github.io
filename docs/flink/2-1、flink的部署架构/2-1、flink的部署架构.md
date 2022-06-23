@@ -117,7 +117,7 @@ native部署使用资源管理器后的一种特殊的部署效果。其特点�
 * 支持Native部署模式的有Yarn,Kubernetes，Mesos资源管理器。
 * Standalone不支持Native部署。  
 native部署的流程如下：
-* 当在ClusterManagement上启动Session集群时，只启动JobManager实例，不启动有TaskManager。
+* **当在ClusterManagement上启动Session集群时，只启动JobManager实例，不启动有TaskManager。**
 * 提交Job-1后根据Job的资源申请，动态启动TaskManager满足计算需求。
 * 提交Job-2, Job-3后，再次向ClusterManagement中申请TM资源  
 
@@ -185,7 +185,7 @@ native部署的流程如下：
 #### 3.3.2. flink on yarn架构 
 ![](yarn集群部署架构.png)    
 yarn集群部署架构有四大关键点: 
-* ResouManager ( NM) :
+* ResouManager ( RM) :
   * 负责处理客户端请求
   * 监控NodeManager
   * 启动和监控APPlicationMaster
