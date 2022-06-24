@@ -5,7 +5,7 @@
 ![](flink-graph转换图.png)  
 
 ### 2.1. flink graph转换
-![](flink-graph转换图详细.png)  
+<img src="flink-graph转换图详细.png" style="zoom:150%;" />  
 
 #### 2.1.1. program->stream graph
 ![](program转换streamgraph.png)    
@@ -29,14 +29,13 @@
 	}
   ```
   
-
 * StreamGraphGenerator生成graph的时候遍历进行生成graph
   ```
   	Collection<Integer> transformedIds;
 		if (transform instanceof OneInputTransformation<?, ?>) {
 			transformedIds = transformOneInputTransform((OneInputTransformation<?, ?>) transform);
 		} else if (transform instanceof TwoInputTransformation<?, ?, ?>) {
-  ```  
+  ```
 
 
 * 上一步会将算子的信息放入到StreamGraph对象之中，如：
@@ -44,7 +43,7 @@
   	private <T> Collection<Integer> transformPartition(PartitionTransformation<T> partition) {
 		Transformation<T> input = partition.getInput();
 		List<Integer> resultIds = new ArrayList<>();
-
+  
 		Collection<Integer> transformedIds = transform(input);
 		for (Integer transformedId: transformedIds) {
 			int virtualId = Transformation.getNewNodeId();
@@ -52,10 +51,10 @@
 					transformedId, virtualId, partition.getPartitioner(), partition.getShuffleMode());
 			resultIds.add(virtualId);
 		}
-
+  
 		return resultIds;
 	}
-  ``` 
+  ```
 
 * 最终会生成完整的streamgraph    
 
@@ -66,7 +65,7 @@
 
 #### 2.1.2. stream graph -> job graph
 ![](streamgraph转换到jobgraph.png)  
-  
+
 * streamgraph的getjobGraph会将streamgraph生成jobgraph
   ```
         public JobGraph getJobGraph(@Nullable JobID jobID) {
@@ -96,6 +95,7 @@ ExecutionGraph调度器分类：
 * LegacyScheduler  
   * 基于ExecutionGraph 内部调度
   
+
 ![](executiongraph调度器.png)
 ## 3. task  
 ### 3.1. task的class结构  
@@ -130,7 +130,7 @@ ExecutionGraph调度器分类：
             ResultPartitionConsumableNotifier resultPartitionConsumableNotifier,
             PartitionProducerStateChecker partitionProducerStateChecker,
             Executor executor) {
-```  
+```
 ![](task实现的接口.png)  
 ### 3.2. task触发和执行 
 ![](task的触发和执行1.png)   
@@ -203,7 +203,7 @@ FailoverStrategy接口目前支持：
   只要有Task失败就直接重启Job中所有的，Task实例，这样做的代价相对较大，需要对整个Job进行重启，因此不是首选项。
 * RestartPipelinedRegionStrategy   
   RestartPipelinedRegionStrategy策略是只启动与异常Task相关联的Task实例。在Pipeline中通过Region定义上下游中产生数据交换的Task集合，当Region中出现失败的Task，直接重启当前Task所在的Region，完成对作业的容错，其他不在Region内的Task实例则不做任务处理，RestartPipelinedRegionStrategy是Flink中默认支持的容错策略。    
-    
+  
   FailoverStrategy有三个关键点:   
   * FailoverStrategy  
     用于控制Task的重启范围，包括重启全部Task还是重启PipelinedRegion内的相关Task  
@@ -213,4 +213,5 @@ FailoverStrategy接口目前支持：
     用于构建Task重启时需要的拓扑、确定异常Task关联的PipelinedRegion，然后重启Region内的Task。  
 
   
+
 还有更多。。。。。。。。。
