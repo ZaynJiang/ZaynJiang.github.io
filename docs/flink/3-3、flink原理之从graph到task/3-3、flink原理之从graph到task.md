@@ -81,7 +81,28 @@ jobgraph的核心成员为：
 
 #### 2.1.3. job graph  -> executiongraph      
 ![](jobgraph到executiongraph.png)    
-![](executiongraph组成.png)     
+![](executiongraph组成.png) 
+
+* JobVertex
+
+  实际上就是JobGraph的节点，代表一个或者一组Operator实例，JobGraph仅是一个计算逻辑的描述，节点和节点之间通过Intermediate Data Set连接。
+
+* ExecutionJobVertex
+
+  ExecutionGraph的Job节点，和JobGraph中JobVertex一一对应，ExecutionJobVertex相当于一系列并行的操作。
+
+* ExecutionVertex
+
+  ExecutionGraph中的子节点，代表ExecutionJobVertex中的并行实例，在ExecutionVertex中ExecutionVertexID作为唯一ID，每个ExecutionVertex都具备Execution变量，Execution负责向TaskExecutor中提交和运行相应的Task。
+
+* IntermediateResult
+
+  ExecutionJobVertex上游算子的中间数据集，每个IntermediateResult包含多个IntermediateResultPartition，通过IntermediateResultPartition生成物理执行图中的ResultPartition组件，用于网络栈中上游Task节点的数据输出。
+
+* Execution
+
+  ExecutionVertex节点中对应的执行单元，ExecutionVertex可以被执行多次，如recovery、re-computation和re-
+  configuration等操作都会导致ExecutionVertex重新启动和执行，此时就会通过Execution记录每次执行的操作，Execution提供了向TaskExecutor提交Task的方法    
 
 
 #### 2.1.4. execution graph -> 物理执行图
@@ -263,7 +284,44 @@ KeyGroupStreamPartitioner实际上就是对数据按照Key进行分组，然后�
 		}
 
 ```
+#### TaskExecutor.submitTask()
+
+```
+// 如果添加成功，则执行Task线程
+if (taskAdded) {
+// 启动Task线程
+task.startTaskThread();
+// 设定ResultPartition
+setupResultPartitionBookkeeping(
+tdd.getJobId(),
+tdd.getProducedPartitions(),
+task.getTerminationFuture());
+return CompletableFuture.completedFuture(Acknowledge.get());
+} else {
+final String message = "TaskManager already contains a task for id
+" +
+task.getExecutionId() + '.';
+log.debug(message);
+throw new TaskSubmissionException(message);
+}
+} catch (TaskSubmissionException e) {
+
+}
+return FutureUtils.completedExceptionally(e);
+```
+
+* 构建task
+
+  StreamTask通过继承和实现AbstractInvokable抽象类，提供了对流计算任务的支持和实现，StreamTask是所有Streaming类型Task的基本实现类
+
+* task 反射获取operate
+
+* 
+
+  
+
 ### 3.3. task的运行状态
+
 ![](task的运行状态.png)    
 
 ### 3.4. task重启与容错  
