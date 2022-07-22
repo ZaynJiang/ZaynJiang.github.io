@@ -155,6 +155,15 @@ public abstract class KeyedBroadcastProcessFunction<KS, IN1, IN2, OUT> {
 ```
 
 ## 3. Flink状态持久化  
+
+**ps:flink和kakfa精准一次的保证，主要是因为kafka消费时可以seek位移和kafka的事务支持，且flink的有状态存储**
+
+**source时，poll了kafka的消息后，flink触发了checkpoint，将其位移持久化。当收到所有的checkpoint成功时，将checkpoinid对应的位移commit到kafka**
+
+**sink时，sink时先存储到缓冲区，收到了flink的checkpoit，将事务等信息持久化，同时flush了kakfa事务消息隔离级别为未提交，只有当收到当收到所有的checkpoint成功时，才真正提交将checkpoinid对应的的事务消息。**
+
+**这种才能保证消息的精准1次**
+
 ### 3.1. checkpoint  
 通过jobmanager来定时发起checkpoint  
 * checkpoint coordinator向source发起trigger checkpoint
