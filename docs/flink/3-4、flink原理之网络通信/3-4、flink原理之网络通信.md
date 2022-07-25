@@ -228,6 +228,8 @@ StreamRecord并发送到OperatorChain中继续处理
 
 ### 3.2. streamtask之间的传输
 
+![](taskmanager之间的数据传输.png) 
+
 在ExecutionGraph调度和执行
 ExecutionVertex节点的过程中，会将OperatorChain提交到同一个
 Task实例中运行。如果被调度的作业为流式类型，则
@@ -715,22 +717,109 @@ PartitionRequestClientFactory实例依赖同一个Netty客户端，即所
 
   
 
-
 #### 3.2.7.  NetworkBuffer资源管理
+
+![](网络传输的内存管理.png)
 
 * NetworkBuffer的设计与实现
 * NetworkBufferPool与LocalBufferPool
 * NetworkBufferPool详解
 * ResultPartition中NetworkBuffer的管理与使用
 
+###   3.3. 反压机制
 
+在基于网络进行传输数据的过程中，会出现下游Task处理能力下
+降的情况，此时如果上游的Task还是不断地向下游节点发送Buffer数
+据，就会出现数据生产速率高于消费速率的情况。使得下游Task不断
+累积Buffer数据却不能被及时处理，极端情况下可能会导致整个服务
+宕机，影响正常处理业务数据。这种情况就需要借助反压机制平衡网
+络上游算子的数据发送速度和下游的处理能力
 
+#### 3.3.1. tcp反压
 
+早期Flink版本中并没有刻意增加反压机制，而是借助TCP网络
+数据传输中各自的反压能力，也就是说TCP中有反压机制。如果TCP
+Channel中的数据没有被及时处理，就会影响TCP上游节点数据的写出
+操作。在TCP的反压机制中，通过Socket给发送Buffer数据到接收端
+后，接收端将数据堆积情况反馈给发送端，包含接收端的Buffer还有
+多少剩余空间等信息，发送端会根据剩余空间控制发送速率
 
-### 3.3. taskmanager之间的数据传输
+1）下游一旦因Task处理能力不足产生了反压，整个TCP通道就会
+堵塞，导致整个TaskManager所有的Task都无法传输Buffer数据，即便
+其他Task实例还有额外的Buffer空间处理数据。
+2）上游ResultPartition只能通过TCP通道的状态被动地感知下游
+数据的处理能力，不能提前调整数据的发送频率，也不能根据
+ResultPartition当前的数据挤压情况及时调整下游节点的数据处理速
+度
 
-![](taskmanager之间的数据传输.png)  
+综合来看，基于TCP的反压机制虽然在一定程度上解决了系统中数
+据处理过程中的反压问题，但是从影响面和灵活度的角度来看，这种
+反压机制对系统的影响过大，某一个Task运行过慢就可能降低整个作
+业的效率。同时，这种反压机制缺乏灵活性，上下游Task之间无法快
+速感知对方的处理情况，不能自主调整各自的数据处理策略
 
+#### 3.3.2. 信用值的反压机制
 
-### 3.4. 网络传输的内存管理  
-![](网络传输的内存管理.png)
+基于信用值的反压机制，旨在解决基于TCP通道实现反压机制的问题，
+如图7-34所示。其实现原理是引入信用值表示下游Task的处理能力，
+使用Backlog表示上游ResultPartition中数据堆积的情况，通过
+Credit和Backlog指标的增减控制上下游数据生成和处理的频率。和早
+期的反压机制相比，基于信用值的反压机制更具灵活性且影响范围更
+小。
+如图7-34所示，基于信用值实现的反压机制多了许多新的概念，
+除了Backlog和Credit外，还有ExclusiveBuffer和FloatingBuffer队
+列，ExclusiveBuffer是为每一个InputChannel申请的专有Buffer队
+列，仅为当前InputChannel中的Buffer数据提供存储空间，
+FloatingBuffers是一个浮动的Buffer队列，所有的InputChannel都可
+以向NetworkBufferPool申请Floating Buffer资源，申请到的资源可
+以为当前InputChannel使用，但使用完毕后会立即释放。
+
+![image-20220725165922126](image-20220725165922126.png) 
+
+1）在RemoteInputChannel的创建和启动过程中，会向
+NetworkBufferPool申请Exclusive Buffers空间，具体申请的大小由
+用户根据参数配置。
+2）当RemoteInputChannel启动后，会向ResultPartition提交
+PartitionRequest注册InputChannel信息，此时会将Exclusive
+Buffers队列的大小写入InitialCredit对象，再将InitialCredit指标
+写入PartitionRequest，最终注册到ResultPartition中。
+3）当上游ResultSubPartition BufferConsumer队列写入新的
+BufferConsumer对象后，当前ResultSubPartition会同步增加Backlog
+值，Backlog越大说明BufferConsumer的数量也越多，最后将Backlog
+值跟随Buffer数据转换成BufferResponse结构发送到
+RemoteInputChannel中。
+4）当RemoteInputChannel接收到BufferResponse后，会解析出
+Backlog指标，根据Backlog的大小，判断当前RemoteInputChannel中
+的Exclusive Buffers是否有足够的Buffer资源，如果没有则向
+NetworkBufferPool申请Floating Buffers资源。申请成功后，会更新
+UnAnnouncedCredit指标。
+5）RemoteInputChannel检测到有足够的可用Buffer时，会向
+ResultPartition发送UnAnnounced信用值，从而增加该
+RemoteInputChannel中的信用值。
+6）在ResultSubPartition的NetworkSequenceViewReader中维护
+RemoteInputChannel中的信用值。
+7）当NetworkSequenceViewReader中检测到下游有足够的信用值
+后，会将NetworkSequenceViewReader添加到AvailableReader队列
+中，然后从ResultSubPartition中读取Buffer数据，下发到下游
+RemoteInputChannel中进行处理。
+以上就是基于信用值实现反压机制的过程，相比于直接基于TCP实
+现的反压机制，虽然显得比较复杂，但是带来了非常灵活的反压能
+力，减少了因部分Task反压而影响整个TaskManager服务的情况。
+
+以上就是Backlog和Credit的更新逻辑，可以看出，Backlog能够
+通过指标的变化影响下游RemoteInputChannel中浮动Buffer的数量，
+提升InputChannel的数据处理能力。Backlog越大说明上游堆积的数据
+越多，需要更多的Buffer空间存储上游的数据。可以将Credit理解为
+下游处理数据能力的体现，当RemoteInputChannel中AvailableBuffer
+的数量发生变化时，会将该信息转换为信用值发送给
+ResultPartition，表明下游具备数据处理能力，可以处理更多的
+Buffer数据，即通过信用值控制上游Task发送数据的频率。可以看
+出，上述两个过程是相辅相承的，ResultPartition通过Backlog控制
+下游处理数据的能力，RemoteInputChannel通过信用值控制上游发送
+数据的频率。下游数据如果处理不及时，就会发送Backlog提升
+RemoteInputChannel中Floating Buffer的数量。如果
+RemoteInputChannel无法申请更多的浮动Buffer，则不会再向上游发
+送Credit，此时就会从AvailableReader队列中移除
+NetworkSequenceViewReader，不会再将ResultPartition中的Buffer
+推送给下游，直到下游有足够的信用值，才会触发
+NetworkSequenceViewReader的读取和发送操作。
