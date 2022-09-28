@@ -354,6 +354,12 @@ CoreModuleProvider在准备阶段实现CoreModule中定义的所有Service。
 
 ModuleManager接着会调用bootstrapFlow.start(this);
 
+调用这个之前会使用校验provider是否都提供了这些服务，即module需要什么杨的service，provider就需要提供什么，否则启动不起来
+
+```
+  provider.requiredCheck(provider.getModule().services());
+```
+
 这个会将provider启动，这将会启动CoreModuleProvider的start方法如下：
 
 ```

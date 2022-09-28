@@ -1539,7 +1539,7 @@ public class Buffer<T> implements QueueBuffer<T> {
         int next;
         do {
             next = this.values.incrementAndGet(VALUE_OFFSET);
-            if (next > endValue && this.values.compareAndSet(VALUE_OFFSET, next, startValue)) {
+            if (next > endValue && this.values.compareAndSet(VALUE_OFFSET, next, startValue)) {//如果超过了则就设置为0，正常不会走到这里来
                 return endValue;
             }
         }
@@ -2073,6 +2073,36 @@ public class DataCarrier<T> {
 根据前面定义的这些类，进行操作buffer即可
 
 ![](datacarrier代码类图.png) 
+
+
+
+* ConsumerThread
+
+  线程run会从它的一个成员变量datasource将数据取到一个新创建的数组之中，然后调用成员变量的consumer的，consumer.consume(consumeList)方法，而这个datasource、consumer是ConsumeDriver创建的
+
+* consumerDriver构造函数中会创建多个ConsumerThread，begin的时候start，而consumerDriver是由DataCarrier创建的
+
+  beign的时候还会allocateBuffer2Thread。将传入的channel 分片分到各个线程中，调用addDatasource方法包装了下数据源
+
+* DataCarrier
+
+  DataCarrier consume方法会创建consumerDriver并初始化
+
+* TraceSegmentServiceClient
+
+  会创建DataCarrier实例初始化buffer和channel，最终会创建consumerDriver启动线程
+
+  ```
+  carrier.consume(this, 1);
+  ```
+
+  this就是consumer，1是线程数
+
+  
+
+* TraceSegmentServiceClient可调用carrier.produce(traceSegment)往容器中放入数据，首先会根据当前线程从channels中选一个buffer，然后在buffer中添加数据
+
+* TraceSegmentServiceClient的consumer方法就是ConsumerThread中的consumer实例调用的
 
 ## 7. 链路数据发送
 

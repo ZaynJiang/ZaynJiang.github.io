@@ -60,3 +60,20 @@ git push origin master
 
   
 
+## 编译步骤
+
+一定要使用命令行
+
+执行命令行拉取代码
+
+```
+git clone -b 8.9.1 --recurse-submodules https://github.com/apache/skywalking.git
+```
+
+编译
+
+```
+mvnw clean package -DskipTests
+```
+
+-Dmaven.test.skip=true
