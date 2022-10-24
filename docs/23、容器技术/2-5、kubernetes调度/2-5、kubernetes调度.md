@@ -85,3 +85,4 @@ Device Plugin 、kubelet、调度器如何协同工作：
 调度： Pod申明需要一个GPU -> 调度器找到GPU数量满足条件的node -> Pod绑定到对应的Node上 -> kubelet发现需要拉起一个Pod，且该Pod需要GPU -> kubelet向 Device Plugin 发起 Allocate()请求 -> Device Plugin根据kubelet传递过来的需求，找到这些设备对应的设备路径和驱动目录，并返回给kubelet -> kubelet将这些信息追加在创建Pod所对应的CRI请求中 -> 容器创建完成之后，就会出现这个GPU设备（设备路径+驱动目录）-> 调度完成
 
 ## 5. 总结
+
