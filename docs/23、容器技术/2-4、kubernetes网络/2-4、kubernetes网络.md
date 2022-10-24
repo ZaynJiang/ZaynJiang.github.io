@@ -58,6 +58,7 @@ CNI插件作用：即配置Infra容器的网络栈，并连到网桥上
 
 Kubernetes 对 Pod 进行“隔离”的手段，即：NetworkPolicy。
 
+NetworkPolicy 实际上只是宿主机上的一系列 iptables 规则。这跟传统 IaaS 里面的安全组（Security Group）其实是非常类似的。
 
 Kubernetes 的网络模型以及大多数容器网络实现，其实既不会保证容器之间二层网络的互通，也不会实现容器之间的二层网络隔离。这跟 IaaS 项目管理虚拟机的方式，是完全不同的。
 
