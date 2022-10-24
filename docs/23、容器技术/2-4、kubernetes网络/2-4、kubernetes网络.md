@@ -56,3 +56,38 @@ CNI插件作用：即配置Infra容器的网络栈，并连到网桥上
 
 ## 4. 网络隔离
 
+Kubernetes 对 Pod 进行“隔离”的手段，即：NetworkPolicy。
+
+
+Kubernetes 的网络模型以及大多数容器网络实现，其实既不会保证容器之间二层网络的互通，也不会实现容器之间的二层网络隔离。这跟 IaaS 项目管理虚拟机的方式，是完全不同的。
+
+Kubernetes 从底层的设计和实现上，更倾向于假设你已经有了一套完整的物理基础设施。然后，Kubernetes 负责在此基础上提供一种“弱多租户”
+
+## 5. 负载均衡
+
+Kubernets中通过Service来实现Pod实例之间的负载均衡和固定VIP的场景。 
+
+Service的工作原理是通过kube-proxy来设置宿主机上的iptables规则来实现的。
+
+kube-proxy来观察service的创建，然后通过修改本机的iptables规则，将访问Service VIP的请求转发到真正的Pod上。 
+
+基于iptables规则的Service实现，导致当宿主机上有大量的Pod的时候，成百上千条iptables规则不断刷新占用大量的CPU资源。
+
+因此出现了一种新的模式: IPVS，通过Linux的 IPVS模块将大量iptables规则放到了内核态，降低了维护这些规则的代价（部分辅助性的规则无法放到内核态，依旧是iptable形式）。
+
+ Service的DNS记录： <myservice>.<mynamespace>.svc.cluster.local ，当访问这条记录，返回的是Service的VIP或者是所代理Pod的IP地址的集合 Pod的DNS记录： <pod_hostname>.<subdomain>.<mynamespace>.svc.cluster.local， 注意pod的hostname和subdomain都是在Pod里定义的。 Service的访问依赖宿主机的kube-proxy生成的iptables规则以及kube-dns生成的DNS记录。外部的宿主机没有kube-proxy和kube-dns应该如何访问对应的Service呢？
+
+有以下几种方式： NodePort： 比如外部client访问任意一台宿主机的8080端口，就是访问Service所代理Pod的80端口。由接收外部请求的宿主机做转发。
+
+ 即：client --> nodeIP:nodePort --> serviceVIP:port --> podIp:targetPort LoadBalance：
+
+由公有云提供kubernetes服务自带的loadbalancer做负载均衡和外部流量访问的入口 ExternalName：通过ExternalName或ExternalIp给Service挂在一个公有IP的地址或者域名，当访问这个公有IP地址时，就会转发到Service所代理的Pod服务上 Ingress是用来给不同Service做负载均衡服务的，也就是Service的Service
+
+### 5.1. 服务发现
+
+### 5.2. 反向代理
+
+集群外访问到服务，要经过3次代理： 访问请求到达任一宿主机，会根据NodePort生成的iptables规则，跳转到nginx反向代理， 请求再按照nginx的配置跳转到后台service，nginx的配置是根据Ingress对象生成的， 后台service也是iptables规则，最后跳转到真正提供服务的POD
+
+## 6. 总结
+
