@@ -67,7 +67,7 @@ prometheus提供了动态发现的模式。可以支持如下几类系统来发�
 
 * 云平台
 
-  ec2、azure、opeanstack
+  ec2、azure、openstack
 
 * 服务发现组件
 
@@ -185,3 +185,8 @@ prometheus不会对告警进行处理，需要借助一个组件AlertManager，�
 
 #### 8.2.2. 机制
 
+## 9. 总结
+
+* Prometheus只针对性能和可用性监控，并不进行日志监控
+* Prometheus的本地存储只存储短时间数据，历史数据歼十一使用远端存储
+* Prometheus监控数据没有对单位进行定义，需要使用者自己区分。对多租户的监控需要自己组合
