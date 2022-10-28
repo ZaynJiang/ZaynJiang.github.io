@@ -1,8 +1,12 @@
 
 
-## 1.
+## 1. 背景
 
-pod是k8s操作的最小单元，操作pod的工作都是由控制器controller完成的，对应k8s中的组件就是kube-controller-manager，其下常见的控制器类型有：
+### 1.1. 控制器
+
+**pod是k8s操作的最小单元，操作pod的工作都是由控制器controller完成的**，对应k8s中的组件就是kube-controller-manager，这个组件，就是一系列控制器的集合，我们可以查看pkg/controller 目录，可以看到多个空控制器目录文件。
+
+常见的控制器类型有：
 
 - Deployment，无状态容器控制器，通过控制ReplicaSet来控制pod；应用场景web应用；
 - StatefulSet，有状态容器控制器，保证pod的有序和唯一，pod的网络标识和存储在pod重建前后一致；应用场景主从架构；
@@ -10,7 +14,39 @@ pod是k8s操作的最小单元，操作pod的工作都是由控制器controller�
 - Job，普通任务容器控制器，只会执行一次；应用场景离线数据处理；
 - CronJob，定时任务容器控制器，定时执行；应用场景通知、备份；
 
-控制器的yaml文件一般分为两个部分，上半部分是关于控制器的定义，下半部分是关于被控制对象，也就是pod的定义：
+#### 1.1.1. 控制器机制
+
+它们都遵循 Kubernetes 项目中的一个通用编排模式，即：控制循环（control loop）
+
+```
+for {
+  实际状态 := 获取集群中对象X的实际状态（Actual State）
+  期望状态 := 获取集群中对象X的期望状态（Desired State）
+  if 实际状态 == 期望状态{
+    什么都不做
+  } else {
+    执行编排动作，将实际状态调整为期望状态
+  }
+}
+```
+
+* 实际状态
+
+  kubelet 通过心跳汇报的容器状态和节点状态
+
+  监控系统中保存的应用监控数据
+
+  控制器主动收集的它自己感兴趣的信息
+
+* 期望状态
+
+  一般来自于用户提交的 YAML 文件。这些信息往往都保存在 Etcd 中
+
+#### 1.1.2. 控制器配置
+
+控制器配置的yaml文件一般分为两个部分，上半部分是关于控制器的定义，下半部分是关于被控制对象，也就是
+
+例如Deployment控制器配置示例如下：
 
 ```
 ## 上半部分，定义控制器
@@ -62,9 +98,40 @@ DaemonSet控制器确保k8s集群中的每个节点有且仅有一个定义的po
 - 通过nodeAffinity节点亲和性来保证每个守护pod只会在和其亲和的节点上被调度运行；
 - 通过tolerations声明，允许守护pod可以在被标记为污点的Node上调度运行
 
+### 1.2. 声明式api
 
+​	为了使用这些控制器，我们需要编写API 对象，这些api对象有的是用来描述应用，有的则是为应用提供各种各样的服务。但是，无一例外地，为了使用这些 API 对象提供的能力，你都需要编写一个对应的 YAML 文件交给 Kubernetes。
 
-## 2. pod
+​	声明式API（kubectl apply）执行的是一个PATCH操作，一次能处理多个写操作，并具备merge的能力。 所谓的“声明式”，指的就是我只需要提交一个定义好的API对象来“声明”我所期望的状态是什么样子。“声明式API”允许多个API写端，以Patch的方式对API对象进行修改，而无需关心本地原始YAML文件的内容。正是具有以上两个重要能力，Kubernetes项目才可以基于对API对象的增、删、改、查，在完全无需外界干涉的情况下，完成对“实际状态”和“期望状态”的调谐“reconcile”过程。声明式API才是K8s的核心所在。	
+
+​	一般来说，扩展api server (或者说添加自定义 resource )有两种方式： 
+
+* 通过创建CRDs, 主API server可以处理 CRDs 的 REST 请求（CRUD）和持久性存储。简单，不需要其他的编程。更适用于声明式的API，和kubernetes高度集成统一。
+* API Aggregation, 一个独立的API server。主API server委托此独立的API server处理自定义resource。 需要编程，但能够更加灵活的控制API的行为，更加灵活的自定义存储，以及与API不同版本之间的转换。一般更适用于命令模式，或者复用已经存在REST API代码，不直接支持kubectl 和 k8s UI, 不支持scope resource in a cluster/namespace.
+
+​	自定义 resource 可以使你方便的存取结构化的resource 数据。但是只有和controller组合在一起才是声明式API。声明式API允许你定义一个期望的状态。controller通过解读结构化的resource数据，获得期望状态，从而不断的调协期望状态和实际状态。 
+
+​	综上，今天文档中的types.go 应该是给controller来理解CRDs的schema用的。只有掌握了resource的schema，才能解释并得到用户创建的resource API object。 而 kubectl create -f resourcedefinition.yaml 或者 自定义API server， 则定义了RESTful API endpoint. 用于接受 REST 请求，改变 resource 的期望状态
+
+#### 1.2.2. 声明式api不足
+
+声明式api还是有一些本质不足的地方，主要是 
+
+1.通常operator都是用来描述复杂有状态集群的，这个集群本身就已经很复杂了
+
+2.声明式api通过diff的方式来得出集群要做怎么样的状态变迁，这个过程中，常常会有很多状况不能覆盖到，而如果使用者对此没有深刻的认识，就会越用越糊涂。
+
+大致来说，如果一个集群本身的状态有n种，那么operator理论上就要覆盖n*(n-1)种变迁的可能性，而这个体力活几乎是不可能完成的，所有很多operator经常性的不支持某些操作，而不是像使用者想象的那样，我改改yaml，apply一下就完事了
+
+更重要的是，由于情况太多太复杂，甚至无法通过文档的方式，告诉使用者，状态1的集群，按某种方式修改了yaml之后，是不能变成使用者期待的状态2的 
+
+如果是传统的命令式方式，那么就是所有可能有的功能，都会罗列出来，可能n个状态，只有2n+3个操作是合法的，剩下都是做不到的，这样使用者固然受到了限制，但这种限制也让很多时候的操作变得更加清晰明了,而不是每次改yaml还要思考一下，这么改，operator支持吗？ 
+
+当然，声明式api的好处也是明显的，如果这个diff是operator覆盖到的，那么就能极大的减轻使用者的负担，apply下就解脱了
+
+而这个集群状态变迁的问题是本质复杂的，必然没有可以消除复杂度的解法，无非就是这个复杂度在operator的实现者那里，还是在运维者那里，在operator的实现者那里，好处就是固化的常用的变迁路径，使用起来很方便，但如果operator的开发者没有实现某个状态的变迁路径，而这个本身是可以做到的，这个时候，就比不上命令式灵活，个人感觉就是取舍了
+
+## Pod API 对象
 
 POD的直议是豆荚，豆荚中的一个或者多个豆属于同一个家庭，共享一个物理豆荚（可以共享调度、网络、存储，以及安全），每个豆虽然有自己的空间，但是由于之间的缝隙，可以近距离无缝沟通（Linux Namespace相关的属性。
 
@@ -92,19 +159,75 @@ Pod的定义为：
 
   2组机器，蓝代表当前的V1版本，绿代表已经升级完成的V2版本。通过LB将流量全部导入V2完成升级部署。优点是切换快速，缺点是影响全部用户
 
-## 3. API对象
 
-### 3.1. 声明式API概念
 
-### 3.2. 服务网格案例
+### pod生命周期
 
-通过预设sidecar容器配置，应用发布pod时，自动读取sidecar配置生成容器，完成服务网格的初始化
+### configmap
 
-### 3.3. 自定义API对象
+ConfigMap与 Secret 的区别在于，ConfigMap 保存的是不需要加密的、应用所需的配置信息。而 ConfigMap 的用法几乎与 Secret 完全相同：你可以使用 kubectl create configmap 从文件或者目录创建 ConfigMap，也可以直接编写 ConfigMap 对象的 YAML 文件.
 
-Kuberentes的API对象由三部分组成，通常可以归结为： /apis/group/version/resource，例如     apiVersion: Group/Version    kind: Resource APIServer在接收一个请求之后，会按照 /apis/group/version/resource的路径找到对应的Resource类型定义，根据这个类型定义和用户提交的yaml里的字段创建出一个对应的Resource对象 CRD机制： （1）声明一个CRD，让k8s能够认识和处理所有声明了API是"/apis/group/version/resource"的YAML文件了。包括：组（Group）、版本（Version）、资源类型（Resource）等。 （2）编写go代码，让k8s能够识别yaml对象的描述。包括：Spec、Status等 （3）使用k8s代码生成工具自动生成clientset、informer和lister （4） 编写一个自定义控制器，来对所关心对象进行相关操作  （1）（2）步骤之后，就可以顺利通过kubectl apply xxx.yaml 来创建出对应的CRD和CR了。 但实际上，k8s的etcd中有了这样的对象，却不会进行实际的一些后续操作，因为我们还没有编写对应CRD的控制器。控制器需要：感知所关心对象过的变化，这是通过一个Informer来完成的。而Informer所需要的代码，正是上述（3）步骤生成
+一个 Java 应用所需的配置文件（.properties 文件），我们可以通过配置保存到configmap之中
 
-### 3.4. 自定义控制器
+### serviceAccount
+
+### 小结
+
+Kuberentes可以理解为操作系统，那么容器就是进程，而Pod就是进程组or虚拟机（几个进程关联在一起）
+
+Pod的设计之初有两个目的： 
+
+* 为了处理容器之间的调度关系 
+
+* 实现容器设计模式
+
+  Pod会先启动Infra容器设置网络、Volume等namespace（如果Volume要共享的话），其他容器通过加入的方式共享这些Namespace
+
+​	如果对Pod中的容器启动有顺序要求，可以使用Init Contianer。所有Init Container定义的容器，都会比spec.containers定义的用户容器按顺序优先启动。Init Container容器会按顺序逐一启动，而直到它们都启动并且退出了，用户容器才会启动。
+
+Pod使用过程中的重要字段： 
+
+* pod自定义/etc/hosts:  spec.hostAliases 
+
+* pod共享PID : spec.shareProcessNamespace 
+
+* 容器启动后/销毁前的钩子： spec.container.lifecycle.postStart/preStop
+
+* pod的状态：spec.status.phase 
+
+* pod特殊的volume（投射数据卷）
+
+  *  密码信息获取
+
+    创建Secrete对象保存加密数据，存放到Etcd中。然后，你就可以通过在Pod的容器里挂载Volume的方式，访问到这些Secret里保存的信息 
+
+  * 配置信息获取
+
+    创建ConfigMap对象保存加密数据，存放到Etcd中。然后，通过挂载Volume的方式，访问到ConfigMap里保存的内容
+
+  * 容器获取Pod中定义的静态信息
+
+    通过挂载DownwardAPI 这个特殊的Volume，访问到Pod中定义的静态信息
+
+  * Pod中要访问K8S的API
+
+    任何运行在Kubernetes集群上的应用，都必须使用这个ServiceAccountToken里保存的授权信息，也就是Token，才可以合法地访问API Server。因此，通过挂载Volume的方式，把对应权限的ServiceAccountToken这个特殊的Secrete挂载到Pod中即可 
+
+* 容器是否健康
+
+  spec.container.livenessProbe。若不健康，则Pod有可能被重启（可配置策略）
+
+* 容器是否可用
+
+  spec.container.readinessProbe。若不健康，则service不会访问到该Pod
+
+## Deployment
+
+Kubernetes 里第一个控制器模式的完整实现即Deployment.
+
+**它实现了 Kubernetes Pod 的水平扩展**。该功能依赖于一个非常重要的概念（API 对象）ReplicaSet对象
+
+滚动更新： 你的游戏角色装备了一套一级铭文，现在有一套二级铭文可以替换。一个个替换，一次替换一个铭文，这就是滚动更新。
 
 ## 4. StatefulSet
 
@@ -159,6 +282,26 @@ DaemonSet 使用 ControllerRevision，来保存和管理自己对应的版本。
 ### 6.2. CronJob
 
 CronJob 描述的，正是定时任务
+
+## 自定义API对象
+
+### 服务网格案例
+
+通过预设sidecar容器配置，应用发布pod时，自动读取sidecar配置生成容器，完成服务网格的初始化
+
+Kuberentes的API对象由三部分组成，通常可以归结为： /apis/group/version/resource，例如     apiVersion: Group/Version    kind: Resource APIServer在接收一个请求之后，会按照 /apis/group/version/resource的路径找到对应的Resource类型定义，根据这个类型定义和用户提交的yaml里的字段创建出一个对应的Resource对象 CRD机制： 
+
+（1）声明一个CRD，让k8s能够认识和处理所有声明了API是"/apis/group/version/resource"的YAML文件了。包括：组（Group）、版本（Version）、资源类型（Resource）等。 
+
+（2）编写go代码，让k8s能够识别yaml对象的描述。包括：Spec、Status等 
+
+（3）使用k8s代码生成工具自动生成clientset、informer和lister 
+
+（4） 编写一个自定义控制器，来对所关心对象进行相关操作  
+
+（1）（2）步骤之后，就可以顺利通过kubectl apply xxx.yaml 来创建出对应的CRD和CR了。 但实际上，k8s的etcd中有了这样的对象，却不会进行实际的一些后续操作，因为我们还没有编写对应CRD的控制器。控制器需要：感知所关心对象过的变化，这是通过一个Informer来完成的。而Informer所需要的代码，正是上述（3）步骤生成
+
+### 自定义控制器
 
 ## 7. 权限
 
