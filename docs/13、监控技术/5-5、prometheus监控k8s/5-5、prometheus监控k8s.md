@@ -76,7 +76,7 @@ Prometheus 默认的 Pull 策略的支持，而且是在代码层面的原生支
 
 ## 2. prometheus搭建
 
-这里我们使用k8s搭建
+这里我们使用k8s搭建，然后还对其自身进行监控
 
 ### 2.1. k8s概念
 
@@ -203,7 +203,7 @@ TODO
   http://节点:端口
   ```
 
-### 2.2. opearator
+### 2.2. opearator安装
 
 ​	Operator是由CoreOS公司开发的用来扩展Kubernetes API的特定应用程序控制器，用来创建、配置和管理复杂的有状态应用，例如数据库、缓存和监控系统。
 
@@ -275,6 +275,101 @@ TODO
 #### 2.2.4. 自定义告警
 
 * 配置规则
+
+  在prometheus的config页面查看alertmanager的配置。
+
+  prometheus发现alertmanager。
+
+  * 配置AlertManagers发现
+
+    对AlertManagers 实例的配置，是通过role为 endpoints的 Kubernetes 的服务发现机制获取的。
+
+    匹配的是服务名为alertmanager-main且端口名为web的Service.
+
+  * 配置规则
+
+    创建规则文件
+
+  * 发现规则
+
+    rule 文件已经被注入对应的rulefiles文件夹下了
+
 * 配置告警
 
+  alertmanger可以配置文件配置各种告警接收器。配置信息源码目录contrib/kube-prometheus/manifests来自于创建的alertmanager-secret.yaml文件。
+
+  对AlertManager的配置也可以使用模板（ .tmpl文件)，这些模板可以与alertmanager.yam1 配置文件一起添加到Secret对象中。
+
+  模板会被放置到与配置文件相同的路径下，当然，要使用这些模板文件，则还需要在alertmanager.yaml配置文件中指定
+
+  在创建成功后, Secret对象将会被挂载到AlertManager对象创建的AlertManagerPod 中.
+
 #### 2.2.5. 高级配置
+
+Prometheus Operator为我们提供了自动发现机制，可以通过自定义发现机制动态发现监控对象
+
+* crd配置
+
+  如果需要自动发现集群中的Service，则需要在Service 的 annotation 区域添加prometheus.io/scrape=true声明, crd文件直接保存为prometheus-additional.yaml,然后通过这个文件创建一个对应的Secret对象。
+
+  然后需要在声明Prometheus的资源对象文件（源码目录contrib/kube-prometheus/manifests/下名为 prometheus-prometheus的 YAML文件）中添加这个额外的配置。然后apply配置。
+
+  Prometheus的 Dashboard 中查看可以查看配置
+
+* 持久化
+
+  需要创建storageclass对象。然后关联具体存储引擎
+
+## 3. prometheus监控对象
+
+前面我们配置和部署了prometheus自身和其监控。我们如何监控其它服务呢？
+
+### 3.1. 监控方式
+
+#### 3.1.1. 静态配置
+
+如果服务提供了metric接口，可以直接配置：要在 Prometheus的 Pod中访问其他服务的数据,典型的做法是使用FQDN形式的URL路径,比如在kube-system命名空间下需要监控一个名为traefik的服务，配置的地址就是traefik.kube-system.svc.cluster.local。
+
+如果服务本身没有提供metrics数据接口,就需要借助exporter服务来实现，比如现在需要对一个 Redis服务进行监控，就可以通过redis-exporte获取 Redis 的监控数据。
+
+​	对于这类应用，在一般情况下会以一个**SideCar 容器**的形式将其与主应用部署在同一个Pod 中，创建一个Redis 服务的资源清单文件 prome-redis.yaml 
+
+```
+TODO
+```
+
+在redis这个Pod中包含了两个容器
+
+一个是redis程序本身
+
+另一个是用于监控redis 的 redis_exporter程序。
+
+**通过Kubernetes Service将这两个程序暴露到不同的端口上。**
+
+验证成功后，在 Prometheus的配置文件的scrape_configs下添加一个抓取任务:
+
+```
+- job_name: 'redis'
+	static_configs:
+	- targets: [ 'redis: 9121']
+```
+
+由于这里的 Redis服务和 Prometheus服务同在一个命名空间下，所以直接使用服务名即可访问,用完整的FQDN形式的地址也是可以的。
+
+在更新完成后前往 Prometheus 的 Dashboard 中查看Targets页面的变化
+
+#### 3.1.2. 节点级监控
+
+由于在3个节点上都运行了node-exporter 程序，所以如果通过一个 Service将数据收集到一起，用静态配置的方式配置到 Prometheus中，那么在 Prometheus中就只会显示一条数据，还得自行在指标数据中过滤每个节点的数据，而且数据显然会丢失。
+
+在Kubernetes下， Promethues通过与Kubernetes API集成来完成自动发现，目前主要支持5种服务发现模式:Node、Service、Pod、Endpoints和 Ingress。
+
+* 配置服务发现job
+
+  replace端口
+
+  标签
+
+### 3.2. 监控对象
+
+​	前面我们知道了Prometheus自动发现 Kubernetes集群的节点，用到了Prometheus针对Kubernetes 的服务发现机制 kubernetes_sd_configs。我们这里通过以上的方式对不同的对象进行监控。
