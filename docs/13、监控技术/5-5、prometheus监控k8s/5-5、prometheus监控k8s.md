@@ -373,3 +373,103 @@ TODO
 ### 3.2. 监控对象
 
 ​	前面我们知道了Prometheus自动发现 Kubernetes集群的节点，用到了Prometheus针对Kubernetes 的服务发现机制 kubernetes_sd_configs。我们这里通过以上的方式对不同的对象进行监控。
+
+#### 3.2.1. 容器监控
+
+**配置方式：**
+
+**指标：**
+
+* cpu
+* 内存
+* io
+* 网络
+
+#### 3.2.2. apiserver监控
+
+apiserver是Kubernetes的核心组件，对它进行监控是非常有必要的，可以直接通过Kubernetes的Service获取监控数据。
+
+**配置方式：**
+
+​	用到role 为endpoints 的kubernetes_sd_configs
+
+```
+TODO
+```
+
+​	如何需要监控其它组件，比如controller manager、schdule则。需要手动创建单独的Service(因为在默认情况下，这些组件没有对应的Service )，其中kube-sheduler 的指标数据端口为10251，kube-controller-manager对应的端口为10252
+
+**指标**
+
+除了针对容器本身的性能监控，还有针对Kubernetes整个系统的监控。
+
+Kubernetes的每个组件都提供了metrics数据接口,Prometheus可以很方便地获取整个Kubernetes集群的运行状态。可以通过PromQL来计算各种指标。
+
+#### 3.2.3.  service监控
+
+上面的apiserver实际上是一种特殊的Service，pod也一样。现在同样配置一个任务来专门发现普通类型的Service
+
+配置job及其过滤规则。
+
+```
+TODO
+```
+
+#### 3.2.4.  kube-state-metrics
+
+​	前面配置了自动发现Service ( Pod也是一样的）的监控，但这些监控数据都是应用内部的监控，需要应用本身提供一个metrics数据接口或者对应的exporter来暴露对应的指标数据。
+
+​	在Kubernetes集群上也需要监控 Pod、DaemonSetDeployment、Job、CronJob 等资源对象的状态，这可以反映出使用这些资源部署的应用的状态。虽然通过查看前面从集群中拉取的指标（这些指标主要来自在 apiserver
+和kubelet 中集成的 cAdvisor )，并没有具体的各种资源对象的状态指标。
+
+​	对于Prometheus来说，当然需要引人新的exporter来暴露这些指标，Kubernetes提供的名为kube-state-metrics的项目。
+
+​	将kube-state-metrics部署到Kubernetes中后会发现，Kubernetes集群中的Prometheus在 kubernetes-service-endpoints这个Job下自动发现 kube-state-metrics,并开始拉取metrics ，这是因为部署kube-state-metrics 的manifest定义文件kube-state-metrics-service.yaml对 Service 的定义包含prometheus.io/scrape: 'true'这样的 annotation。
+
+​	因此kube-state-metrics的 Endpoint可以被Prometheus自动服务发现。
+
+#### 3.2.5.  主机监控
+
+主机监控是通过node_exporter实现的。
+
+要达到监控所有集群节点的目的，可以通过 DaemonSet控制器来部署node-exporter，这样每个节点就都会自动运行一个Pod。如果从集群中删除或者添加节点，则也会进行自动扩展。创建一个名为prome-node-exporter的YAML资源清单文件，文件内容如下:
+
+```
+TODO
+```
+
+注意这个pod需要配置一些共享目录。
+
+还有这里使用kubeadm搭建的,所以如果希望Master节点也一起被监控，则需要添加相应的Kubernetes Toleration(容忍）策略，因为使用kubeadm搭建的集群在默认情况下会将Master节点添加上污点。
+
+因为已经指定了hostNetwork=true,所以在每个节点上都会监控一个9100端口，可以尝试通过这个端口去获取监控指标数据。所以不需要创建Service。
+
+或者可以采用heml工具来进行部署。
+
+## 4. AlertManger
+
+### 4.1. 安装
+
+安装alertmanager,并设置告警策略，还可以设置合并、过滤、静默、降噪，通知类型、设置通知人等等
+
+### 4.2. 告警规则
+
+设置如何触发生成一条告警
+
+### 4.3. webhook
+
+​	前面配置的是 AlertManager自带的邮件告警模板，AlertManager支持多种告警接收器，比如 slack、微信等，其中最为灵活的当属 webhook。我们可以定义一个webhook来接收告警信息，然后在webhook里进行处理，并自定义需要发送怎样的告警信息.
+
+## 5. grafana
+
+### 5.1. 安装
+
+### 5.2. 配置数据源
+
+在主页，我们可以根据自己的需求手动新建一个Dashboa，除此之外，在Grafana的官方网站上还有很多公共的 Dashboard可供使用。这里可以使用Kubernetes cluster monitoring这个 Dashboard来展示Kubernetes集群的监控信息。可以在线添加或者手动添加
+
+### 5.3. 插件
+
+比如可以直接配置k8s集群，然后添加
+
+###  5.4. 告警
