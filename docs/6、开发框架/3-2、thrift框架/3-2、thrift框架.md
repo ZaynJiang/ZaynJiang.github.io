@@ -1091,17 +1091,11 @@ public void writeStructEnd() {}
 
 查看`thrift`的**反序列化机制**，即**数据读取**实现，同样采用**二进制协议**`TBinaryProtocol`，切入点为`pair.read(TProtocol)`：
 
-
-
-![img](https://p1-jj.byteimg.com/tos-cn-i-t2oaga2asx/gold-user-assets/2018/6/19/164185ff1a945020~tplv-t2oaga2asx-zoom-in-crop-mark:4536:0:0:0.image)
-
-
+![image-20221108134522632](image-20221108134522632.png) 
 
 **数据读取**和**数据写入**一样，也是采用的**标准计划**`StandardScheme`。**标准计划**(`StandardScheme`)下的`read()`方法：
 
-
-
-![img](https://p1-jj.byteimg.com/tos-cn-i-t2oaga2asx/gold-user-assets/2018/6/19/164185ff165f31e8~tplv-t2oaga2asx-zoom-in-crop-mark:4536:0:0:0.image)
+![image-20221108134505608](image-20221108134505608.png)
 
 
 
