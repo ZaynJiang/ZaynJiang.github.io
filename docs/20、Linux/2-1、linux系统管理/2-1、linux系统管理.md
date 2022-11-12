@@ -905,9 +905,112 @@ MAC（强制访问控制）与DAC（自主访问控制）
 du:指的是占用的磁盘空间。占用空间取决于文件系统的block的大小，linux默认大小为4K。一个大小为1个字节的文件，最小也要占用4k
 ls 显示的文件大小比du显示的磁盘占用空间小
 
-### 常见文件系统
+### 文件系统
 
+Linux支持多种文件系统，常见的有
 
+- ext4
+- xfs
+- NTFS（需安装额外软件NTFS-3G）
+
+#### ext4文件系统
+
+ext4文件系统基本结构比较复杂，其特点为
+
+- 超级块（记录了当前分区的文件大小 df查询的就是超级块信息）
+- 超级块副本（对超级块进行备份）
+- i节点（inode）（i节点记录每一个文件名称、大小、编号以及权限，但是文件的文件名记录在自己文件的父目录的i节点里面 ls）
+- 数据块（datablock）（记录文件的数据 du）
+
+常见的命令
+
+* ls -l
+
+  除了文件名信息，其他信息都记录在i节点中
+
+* ls -i
+
+  查看每一个文件对应的编号
+
+* touch afile 
+
+  创建空文件
+
+* ls -li afile
+
+  查看i节点的编号
+
+* du -h afile
+
+  查看afile内容
+
+* echo 123 > afile 
+
+  写入123
+
+* ls -li afile 
+
+* du -h afile
+
+  4.0K(在ext4系统里面默认创建一个数据块大小为4K)
+
+* cp afile afile2，ls -li afile
+
+  复制文件可以查看到两个文件的编号不同
+
+* mv afile2 afile3，ls -li afile
+
+  文件编号不发生改变（只是改变目录里面文件名和文件的对应关系），但是越过了分区就会发生改变
+
+* vim afile4，ls -li afile4，vim afile4，ls -li afile4 
+
+  vim编辑afile4 i结点会发生改变，但是使用echo不会发生改变，使用硬链接的方法可以不发生改变（在编辑期间会生成一个.afile4.swp文件）
+
+*  rm afile4
+
+  其实只是将文件名和i节点的链接进行断开（也给恢复文件提供了思路）
+
+**PS:有发明专门存储小文件的文件系统**
+
+#### 链接
+
+Linux中是允许多个文件名与一个inode节点对应的，即多个文件名指向同一个inode。这就允许我们通过产生新的文件名来指向一个另外一个文件名所指向的inode，这就意味着我们可以通过不同的文件名（可能在同一路径也可能在不同路径）来访问同一个文件的数据内容，这种情况就可称为**硬链接**。而软链接其实再**创建一个独立的文件**，但是文件会让数据的读取指向它链接的那个文件。即**软链接会写上链接文件的文件名**。
+
+软链接得依赖于原文件，所以这里当原文件被删除后，软链接文件就不能正常指向了。但硬链接文件还能输出的原因是`inode`还存在，删除了原文件只是让`inode`的链接数减少1。**所以要当inode的链接数变为0时，inode才会被系统回首，文件的内容才会被删除**
+
+* ln afile bfile
+
+  将afile链接到bfile所对应的编号上（注意链接ln不能跨越分区的）
+
+  通过ln创建出来的新文件的inode号码将和原文件的inode号码一样，而在inode信息中的链接数将会`加1`
+
+* ln -s afile  aafile ，ls -li afile aafile
+
+  创建软链接，可以跨越分区（aafile链接文件会带一个l，而且权限是777）
+
+  两个节点所对应的编号是不一样的，
+
+facl 文件访问控制列表（给链接的文件不能使用原先的权限分配方式）
+
+* getfacl afile
+
+  查看权限
+
+* setfacl -m u:user1:r afile
+
+  赋予权限(`u:用户名:权限` 给用户赋予权限，g:组)
+
+* setfacl -m u:user2:rw afile getfacl afile
+
+  查看权限
+
+* setfacl -m g:group1:r afile getfacl afile 
+
+  查看权限
+
+* setfacl -x g:group1:r afile
+
+  回收权限
 
 ### 挂载
 
@@ -918,3 +1021,279 @@ dd if=/dev/sr0 of=/xxx/xx.iso # 把光盘做成光盘镜像
 mount /dev/sr0 /mnt # 挂载
 ```
 
+#### 命令
+
+创建分区：
+
+* fdisk
+
+  查看新添加的硬盘
+
+* fdisk /dev/sdc
+
+  按照对应提示输入
+
+  d 删除对应的默认分区 
+
+  q 不保存直接退出 
+
+  w 保存退出
+
+* fdisk -l
+
+  检查
+
+映射成盘符（设置文件系统）：
+
+* mkfs.   mkfs.ext4   /dev/sdc1
+
+  格式化操作
+
+新建目录挂载：
+
+* mkdir /mnt/sdc1 
+
+* mount /dev/sdc1 /mnt/sdc1
+
+  将/dev/sdc1挂载到/mnt/sdc1
+
+  注：如果硬盘大于2T则不能使用fdisk进行分区，需要使用parted
+
+  parted /dev/sdd
+
+  按照对应的语法处理
+
+#### 持久化
+
+使用mount时挂载信息是临时保存在内存中，如果进行重启则会消失，如果想要固化而需要修改配置信息vim /etc/fstab
+
+可添加 /dev/sdc1 /mnt/sdc1 ext4 defaults 0 0 ，开机后即可挂载(defaults为默认的权限)添加如下代码
+
+### 磁盘配额
+
+#### 命令
+
+- xfs文件系统的用户磁盘配额quota
+- mkfs.xfs /dev/sdb1
+- mkdir /mnt/disk1
+- mount -o uquota,gquota /dev/sdb1 /mnt/disk1
+- chmod 1777 /mnt/disk1
+- xfs_quota -x -c ‘report -ugibh’ /mnt/disk1
+- xfs_quota -x -c ‘limit -u isoft=5 ihard=10 user1’ /mnt/disk1
+
+#### 步骤示例
+
+新建分区
+
+* fdisk /dev/sdb 
+
+  n 新建分区
+
+  p 主分区或扩展分区
+
+  1 默认1号分区
+
+  w 保存
+
+格式化
+
+* mkfs.xfs -f /dev/sdb1
+
+  对分区进行格式化(-f强制操作，避免出错)
+
+ 挂载
+
+* mkdir -p /mnt/disk1
+
+  -p如果目录存在则使用目录，不存在则创建
+
+* mount -o uquota,gquota /dev/sdb1 /mnt/disk1
+
+  挂载并支持用户磁盘配额和组磁盘配额（仅当前修改）
+
+  mount
+
+赋予权限
+
+* chmod 1777 /mnt/disk1
+
+1代表目录的stiddy权限
+
+用户配额
+
+* xfs_quota -x -c 'report -ugibh' /mnt/disk1
+
+  u用户、g组、i节点、b块、h格式化输出
+
+* xfs_quota -x -c 'limit -u isoft=5 ihard=10 user1' /mnt/disk1
+
+  isoft指i节点软限制、ihard指i节点硬限制
+
+测试磁盘配额限制
+
+cd /mnt/disk1/ 
+
+touch 1 2 3 4 5 
+
+touch 6 
+
+touch 7 8 9 18 
+
+touch 11
+
+touch：无法创建'11':超出磁盘限额*
+
+### 交换分区
+
+#### 命令方式
+
+使用两个命令增加交换分区的大小
+
+- mkswap
+- swapon
+
+具体步骤为：
+
+查看内存
+
+* free -m
+
+  或者free -G
+
+* ls -l /dev/sdd
+
+创建分区
+
+* fdisk /dev/sdd
+
+  n 新建分区
+  p 创建主分区
+  1 默认分区号
+  w 保存
+
+设置检查分区
+
+* ls /dev/sdd1
+
+* mkswap /dev/sdd1
+
+  对该分区设置swap标记
+
+* swapon /dev/sdd1 
+
+  增加交换分区
+
+* free -m
+
+  再次查看swap分区大小
+
+* swapoff /dev/sdd1
+
+  关闭该分区的swap空间
+
+#### 文件方式
+
+使用文件制作交换分区
+
+* dd if=/dev/zero bs=4M count=1024 of=/swapfile
+
+  创建1024*4M的一个文件
+
+* mkswap /swapfile
+
+  注意报错问题（权限问题）
+
+* ls -l /swapfile
+
+  查看
+
+* chmod 600 /swapfile
+
+  修改权限
+
+* swapon /swapfile
+
+* free -m
+
+  查看swap空间
+
+#### 永久修改
+
+#### 上述两种为临时
+
+* vim /etc/fstab
+
+  可添加内容
+
+* /dev/sdd1 swap swap defaults 0 0 
+
+  增加交换分区的大小
+
+* /swapfile swap swap defaults 0 0
+
+  使用文件制作交换分区（第一个0表示为要不要备份；第二个0表示为开机是否需要自检，现在的系统是不需要的）
+
+### RAID技术
+
+#### 含义
+
+RAID：磁盘阵列，把多个硬盘进行组合使用。
+
+RAID的常见级别及含义（可使用RAID卡使用）
+
+- RAID 0 striping条带方式，提高单盘吞吐率（把一个数据拆分成两份，分别写到两个磁盘里，每个磁盘存储50%；至少需要两块硬盘）
+- RAID 1 mirroring 镜像方式，提高可靠性（对数据进行自动备份，至少需要两块硬盘）
+- RAID 5 有奇偶校验（对RAID 0和RAID1进行组合，至少需要3块硬盘，前两块写数据（条带方式），第三块硬盘写前面数据的奇偶校验；校验可用于恢复其中任意损坏的一个磁盘数据）
+- RAID 10 是RAID 1 与RAID 0 的结合（最少需要4块硬盘，两块硬盘做RAID1，另外两块也做RAID1，再拿两块做了RAID1的硬盘在做RAID0，这样只要不是同侧的硬盘坏了就可以坏两块）
+
+#### 示例
+
+软件RAID的使用（仅用于演示，效率不高）
+
+* yum install mdadm 
+
+  如果没安装
+
+* fdisk -l 
+
+  最好创建3块大小一致的磁盘
+
+* mdadm -C /dev/md0 -a yes -l1 -n2 /dev/sd[b,c]1 
+
+  -C是创建 -a yes 是同意创建（存在数据直接清除）
+
+  y
+
+* mdadm -D /dev/md0 
+
+  进行查看
+
+* dd if=/dev/zero of=/dev/sdc bs=4M count=1 
+
+  破坏内容（硬件可以直接更换新硬盘测试）
+
+  echo DEVICE /dev/sd[b,c]1 
+
+  echo DEVICE /dev/sd[b,c]1 >> /etc/mdadm.conf
+
+* mdadm -Evs >> /etc/mdadm.conf 
+
+  写配置文件
+
+* mkfs.xfs /dev/md0
+
+* mdadm --stop /dev/md0 
+
+  停掉RAID
+
+### 逻辑卷管理
+
+## 综合状态
+
+系统综合状态查看命令sar以及第三方命令。状态查询的命令如下：
+
+- 使用sar命令查看系统综合状态
+- 使用第三方命令查看网络流量（提供更好的界面）
+  - yum install epel-release
+  - yum install iftop
+  - iftop -P
