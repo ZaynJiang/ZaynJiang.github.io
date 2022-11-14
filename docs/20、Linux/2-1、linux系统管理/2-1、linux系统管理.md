@@ -1288,6 +1288,50 @@ RAID的常见级别及含义（可使用RAID卡使用）
 
 ### 逻辑卷管理
 
+- 逻辑卷和文件系统的关系
+- 为Linux创建逻辑卷
+- 动态扩容逻辑卷
+
+在Linux中默认使用的根目录"/"就是指逻辑卷。
+
+整个过程：
+fdisk -->pv —> vg —>xfs --> mount
+可以将整个目录进行扩充，也可以单独对每个目录进行扩充
+
+先将磁盘做成物理卷，物理卷组成卷组，然后将卷组分给逻辑卷，注意卷组可以分给多个逻辑卷。其过程为：
+
+* fdisk -l /dev/sd??
+
+  添加我们的硬盘，查看分区
+
+* pvcreate /dev/sd[b,c,d]1
+
+  创建3个物理卷
+
+* pvs
+
+  查看物理卷
+
+* vgcreate vg1 /dev/sdb1 /dev/sdc1 
+
+  建立卷组
+
+* vgs
+
+  查看卷组
+
+* lvcreate -L 100M -n lv1 vg1
+
+  添加逻辑卷
+
+* 使用逻辑卷（格式化并挂载）
+
+  mkdir /mnt/test
+
+  mkfs.xfs /dev/vg1/lv1 
+
+  mount
+
 ## 综合状态
 
 系统综合状态查看命令sar以及第三方命令。状态查询的命令如下：
@@ -1297,3 +1341,29 @@ RAID的常见级别及含义（可使用RAID卡使用）
   - yum install epel-release
   - yum install iftop
   - iftop -P
+
+常用命令：
+
+* sar -u 1 10
+
+  cpu的查看，1秒查看一次，共查看10次（和top命令类似）
+
+* sar -r 1 10
+
+  内存的查看
+
+* sar -b 1 10
+
+  IO磁盘读写的查看
+
+* sar -d 1 10
+
+  对应每块磁盘的读写
+
+* sar -q 1 10
+
+  进程的使用
+
+* iftop -P
+
+  使用iftop查看网络情况，默认只监听eth0
