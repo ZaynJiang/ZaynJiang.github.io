@@ -256,3 +256,103 @@ PS：由于管道符是以子进程的形式运行的，故管道符中类似命
   * cat a.sh
 
     查看内容
+
+### 变量
+
+变量名的命名规则为：字母、数字、下划线，不以数字开头
+
+为变量赋值的过程，称为变量替换
+
+#### 赋值
+
+* a=123 
+
+  注意shell变量赋值时，等号的左侧和右侧不能出现空格
+
+* let a=10+20
+
+  使用let为变量赋值。最好不好进行计算，性能低
+
+* l=ls
+
+  将命令赋值给变量
+
+* letc=$(ls -l /etc)
+
+  将命令结果赋值给变量，使用$()或者``
+
+  注意，变量值有空格等特殊字符可以包含在" "或’ '中
+
+示例：
+
+```
+ls /root
+cmd1=`ls /root`
+cmd2=$(ls /root)
+string1=hello bash
+echo $string1 # 无结果，执行了bash
+string1="hello bash"
+echo $string1
+```
+
+#### 引用
+
+* ${变量名}称为对变量的引用
+* echo ${变量名}查看变量的值
+* ${变量名}在`部分情况下`可以省略为 $变量名
+
+示例
+
+```
+string1 = "hello bash"
+# 两种方式一致
+echo ${string}
+echo $string
+# 存在问题的情况
+echo ${string}23 # 正确输出
+echo $string23
+```
+
+#### 作用范围
+
+* 变量的导出export用于将变量传递给子进程
+
+* unset
+
+  用于删除变量
+
+示例：
+
+```
+a=1
+bash
+echo $a # 为空(子进程中无法读取父进程的信息)
+a=2
+exit
+echo $a # 1(子进程更改的数据不影响父进程)
+
+# 子进程影响父进程的书写方式
+demo_var1="hello subshell"
+vim 4.sh
+# 书写内容
+#！/bin/bash
+
+# test echo
+echo $demo_var1
+# 书写内容
+chmod u+x 4.sh
+bash 4.sh # 为空
+./4.sh # 为空
+source 4.sh # hello subshell
+. 4.sh # hello subshell
+
+export demo_var1
+bash 4.sh # hello subshell
+也可以定义时直接声明
+export demo_var1="hello subshell"
+# 删除变量
+unset demo_var1
+```
+
+
+
