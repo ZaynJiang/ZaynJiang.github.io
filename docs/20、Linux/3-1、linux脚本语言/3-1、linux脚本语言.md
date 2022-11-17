@@ -1,4 +1,4 @@
-## shell
+## shell概念
 
 Shell是命令解释器，用于解释用户对操作系统的操作。
 
@@ -813,3 +813,476 @@ cp -v /etc/passwd{,.back} # 前面后缀是空的(,)，后面是.back
 - & 后台运行
 
 - _ 空格
+
+### 测试命令
+
+#### echo $? 
+
+输出上一个命令的执行结果
+
+示例：
+
+* vim 8.sh
+
+  ```
+  # 文件内容
+  #!/bin/bash
+  
+  # exit demo
+  ppwd # 默认没有该命令
+  exit # 自定义错误返回值 exit 127
+  # 文件内容
+  ```
+
+  PS：exit可以自定义错误码
+
+* bash 8.sh
+
+* echo $?
+
+  非0返回值
+
+#### test
+
+test命令用户检查文件或者比较值
+
+具体的可用的功能如下，test可以做以下测试：
+
+- 文件测试
+- 整数比较测试
+- 字符串测试
+
+- test测试语句可以简化为[ ] 符号
+- [ ] 符号还有扩展写法[[ ]]支持&&、||、<、>
+
+示例：
+
+* man test
+
+  查看test命令的用法
+
+* test -f /etc/passwd
+
+  -f 判断文件是否存在
+
+  然后使用echo $? 
+
+  输出0 文件存在
+
+* [ -d /etc/ ]
+
+  判断目录是否存在，换种方式
+
+* [ -e /etc/ ]
+
+  判断目录、文件、链接是否存在
+
+* [ "abc" = "abc" ]
+
+  echo $? 
+
+  输出0
+
+* [ "abc" = "Abc" ]
+
+  echo $? 
+
+  1
+
+* [$UID = 0]
+
+  echo $? 
+
+  判断用户是否为根用户
+
+* [$USER = root]
+
+  echo $?
+
+  判断是否为根用户
+
+### 逻辑分支
+
+#### if-then语句
+
+基本语法
+
+```
+if [测试条件成立] 或命令返回值是否为0
+then 执行相应命令
+fi 结束 
+```
+
+* 判断用户是否为根用户分支
+
+  ```
+  if [ $UID = 0 ]
+  then
+  	echo "root user"
+  fi
+  ```
+
+  分开多行，会自动添加；
+
+* 执行命令成功，则做出动作
+
+  ```
+  if pwd
+  then
+  	echo "pwd running"
+  fi
+  ```
+
+  zhi输出pwd结果，否则输出then之后的内容
+
+#### if-then-else语句
+
+```
+if [ 测试条件成立 ]
+then 执行相应命令
+else 测试条件不成立，执行相应命令
+fi 结束
+```
+
+* vim 9.sh
+
+  ```
+  # 文件内容
+  #!/bin/bash
+  
+  # if else demo
+  if	[ $USER=root ] ;then
+  	echo "user root"
+  	echo $UID
+  else
+  	echo "other user"
+  	echo $UID
+  fi
+  ```
+
+* chmod u+x 9.sh
+
+  授权
+
+* ./9.sh
+
+  执行
+
+#### if-elif-else语句
+
+```
+if [ 测试条件成立 ]
+then 执行相应命令
+elif [ 测试条件成立 ]
+then 执行相应命令
+else 测试条件不成立，执行相应命令
+fi 结束 
+```
+
+案例：
+
+* vim 10.sh
+
+```
+# 文件内容 
+#!/bin/bash
+
+# root user1 other
+if [ $USER=root ];	then
+	echo "root"
+elif [ $USER=user1 ]; then
+	echo "user"
+else
+	echo "other"
+fi
+# 文件内容
+```
+
+#### 嵌套if语句
+
+```
+if [ 测试条件成立 ]
+then 执行相应命令
+	if [ 测试条件成立 ]
+	then 执行相应命令
+	fi
+fi 结束 
+```
+
+案例
+
+* vim 11.sh
+
+```
+# 文件内容 
+#!/bin/bash
+
+# root -x
+if [ $USER=root ];	then
+	echo "please run"
+	if [-x /tmp/10.sh ];	then # 判断当前脚本是否可执行
+		/tmp/10.sh
+	fi
+else
+	echo "switch user root"
+fi
+```
+
+#### case分支
+
+case语句和select语句可以构成分支
+
+```
+case "$变量" in
+	"情况1"	）
+		命令...	;;
+	"情况2"	）
+		命令...	;;
+	*	) # *是通配符，匹配其他情况
+		命令...	;;
+	esac # esac是case的反写
+```
+
+* vim 12.sh 
+
+  ```
+  # 文件内容 
+  #!/bin/bash
+  
+  # case demo
+  case "$1" in
+  	"start"|"START") # 有两种情况
+  	echo $0 start ....
+  	;;
+  	
+  	"stop")
+  	echo $0 stop ....
+  	;;
+  	
+  	"restart"|"reload")
+  	echo $0 restart ....
+  	;;
+  	*)
+  	echo Usage：$0 {restart|stop|restart|reload}
+  	;;
+  esac
+  ```
+
+* chmod u+x 12.sh 
+
+  授权执行
+
+### 循环语句
+
+- 使用for循环遍历命令的执行结果
+- 使用for循环遍历变量和文件的内容
+- C语言风格的for命令
+- while循环
+- 死循环
+- unitl循环
+- break和continue
+- 使用循环对命令行参数的处理
+
+#### 标准for循环
+
+```
+for 参数 in 列表
+do 执行的命令
+done 封闭一个循环
+```
+
+可以使用反引号或$()方式执行命令，命令的结果当做列表进行处理
+
+案例：
+
+* echo {1..9} 
+
+  打印出：1 2 3 4 5 6 7 8 9 
+
+* mkdir {1..9}
+
+  创建目录1到9
+
+* for循环遍历1到9
+
+  ```
+  for i in {1..9}
+  do
+  	echo $i
+  done
+  ```
+
+* 批量改名
+
+  touch a.mp3 b.mp3 c.mp3
+
+  创建3个文件
+
+  ```
+  for filename in `ls *.mp3`##filename从ls命令种获取
+  do
+  	mv $filename $(basename $filename .mp3).mp4 
+  done
+  ls *.mp4
+  ```
+
+  **PS：basename $filename获取当前文件名称，后面加上.mp3即可去除后缀名**
+
+#### C语言风格的for
+
+这种风格不常用
+
+```
+for((变量初始化；循环判断条件；变量变化))
+do
+	 循环执行的命令
+done
+```
+
+案例
+
+```
+# 输出1-10
+for (( i=1; i<=10; i++))
+do
+	echo $i
+done
+```
+
+#### while循环
+
+```
+while test测试是否成立
+do
+	命令
+done
+```
+
+案例1:
+
+```
+a=1
+while [ $a -lt 10 ] 
+do
+	((a++));
+	echo $a
+done
+```
+
+案例2：
+
+死循环
+
+```
+while : # :为空指令
+do
+	echo always;
+done
+```
+
+#### until循环
+
+until循环与while循环相反，循环测试为假时，执行循环，为真时循环停止
+
+```
+# 死循环
+unitl [5 -lt 4]; # 条件为假一直执行
+do
+	echo always;
+done
+```
+
+while的使用频率远高于until。
+
+#### 嵌套与跳转
+
+break、continue
+
+- 循环和循环可以嵌套
+- 循环中可以嵌套判断，反过来也可以嵌套
+- 循环可以使用break和continue语句在循环中退出
+
+嵌套示例：
+
+```
+for sc_name in /etc/profile.d/*.sh
+do
+	if [-x $sc_name] ; then
+		. $sc_name # 执行文件
+	fi
+done
+```
+
+break示例
+
+```
+for num in {1..9}
+do
+	if [$num -eq 5]; then
+		break 
+	fi;
+	echo $num
+done
+```
+
+continue示例
+
+```
+for num in {1..9}
+do
+	if [$num -eq 5]; then
+		continue 
+	fi;
+	echo $num
+done
+```
+
+#### 处理命令行参数案例
+
+- 命令行参数可以使用$1 $2 …${10}…$n进行读取
+- $0 代表脚本名称
+- $*和$@ 代表所有位置参数
+- $# 代表位置参数的数量
+
+该脚本的设计步骤为：
+
+* vim 13.sh
+
+* 脚本内容
+
+  ```
+  # 文本内容
+  #!/bin/bash
+  
+  # help display help help
+  
+  for pos in $*
+  do
+  	if [ "$pos" = "help" ] ; then
+  		echo $pos $pos
+  	fi
+  done
+  
+  # while的书写方式
+  while [$# -gt 1] # 参数大于等于1个
+  do
+  	echo $# # 参数的数量
+  	echo "do something"
+  	if [ "$1"="help" ]; then
+  		echo $1 $1
+  	fi
+  	shift # 参数左移，相当于删除了当前的参数
+  done
+  ```
+
+* chmod u+x 13.sh
+
+  授权
+
+* 验证
+
+  * bash 13.sh
+  * bash 13.sh a b c help
+  * bash 13.sh help
+
+  输出结果：./13.sh a b c d
