@@ -1286,3 +1286,305 @@ done
   * bash 13.sh help
 
   输出结果：./13.sh a b c d
+
+### 函数
+
+#### 自定义函数
+
+函数用于"包含"重复使用的命令集合
+
+其语法为：
+
+```
+function fname(){ # 关键字function可以删除
+	命令
+} 
+```
+
+- local 变量名
+
+  声明函数内部的变量（局部变量）
+
+* $1 $2 $3 … $n
+
+  函数的参数
+
+**示例1：**
+
+* 定义函数
+
+  ```
+  function cdls() {
+  	cd /var
+  	ls
+  }
+  ```
+
+* cdls
+
+  使用该函数
+
+* unset cdls
+
+  删除函数声明
+
+**示例2：**
+
+* 定义函数
+
+  ```
+  cdls() {
+  	cd $1
+  	ls
+  }
+  ```
+
+* cdls /tmp
+
+  遍历函数
+
+**示例3**
+
+判断进程是否存在
+
+* vim 14.sh
+
+  定义函数脚本
+
+  ```
+  # 文本内容
+  #!/bin/bash
+  
+  # functions
+  checkpid() {
+  # proc目录下记录着存活的进程号对应的文件夹
+  	local i
+  	
+  	for i in $*; do
+  		[ -d "/proc/$i" ] && return 0 # 存在即返回0
+  	done
+  	
+  	return 1
+  }
+  ```
+
+* chmod u+x 14.sh
+
+  授权
+
+* source 14.sh
+
+  执行脚本，即定义了sh中的函数
+
+* checkpid 1
+
+  测试函数
+
+* echo $?
+
+  0 即证明进程1是存在的
+
+* checkpid 65533
+
+  1 即证明进程65533是不存在的
+
+#### 系统函数库
+
+系统自建了函数库，可以在脚本中直接引用，etc/init.d/functions。也可以使用source函数脚本文件"导入"函数
+
+* vim /etc/init.d/functions 
+
+  查看文件
+
+* source /etc/init.d/functions 
+
+  导入当前shell运行环境
+
+* echo_success
+
+  绿色确定
+
+### 死循环
+
+可以使用nice和renice调整脚本优先级。
+
+避免出现"不可控的"死循环
+
+* 死循环导致cpu占用过高
+* 死循环导致死机
+
+示例：
+
+* ulimit -a
+
+  查看用户的资源限制
+
+* su - user1
+
+  切换用户
+
+* : | :& 
+
+  两个空指令，控指令
+
+* func() {func | func &}
+
+  递归调用
+
+  & 在后台运行，递归调用
+
+  调用func()
+
+  创建大量子进程
+
+* .(){.|.&} 
+
+  上面的递归调用的简写形式
+
+  fork炸弹
+
+### 信号
+
+捕获信号脚本的编写。我们可以实现如下功能：
+
+- kill默认会发送15号信号给应用程序
+
+- ctrl + c 发送2号信号给应用程序
+
+- 9号信号不可阻塞 
+
+  用于可在备份的时候不会被打断
+
+案例如下：
+
+* vim 15.sh
+
+  ```
+  # 文本内容
+  #!/bin/bash
+  
+  # signal demo
+  
+  trap "echo sig 15" 15 # trap命令捕获信号
+  trap "echo sig 2" 2 # 捕获2号信号可避免ctrl+c
+  
+  echo $$
+  
+  while : # 注意该程序十分消费系统资源
+  do
+  
+  done
+  # 文本内容
+  ```
+
+  这是一个死循环，执行该脚本后，会捕获15号和2号信号
+
+* chmod u+x 15
+  ./15.sh
+
+* 另开一个终端进行测试
+
+* kill -15 PID
+
+  上述进行pid(不可杀死)
+  kill -9 PID
+
+  不可阻塞，可杀死
+
+### 任务
+
+#### 一次性计划任务
+
+让计算机在指定的时间运行程序。需要注意的是计算任务没有终端，需要进行重定向文件输出
+
+* at 18:31 
+
+* echo hello > /tmp/hello.txt 
+
+* ctrl+d
+
+  进行提交 
+
+* atq 
+
+  列出当前用户的at任务列表
+
+#### 周期性计划任务
+
+配置方式：
+
+- crontab -e
+
+  * \* * * * * /usr/bin/date >> /tmp/date.txt
+
+    任意的分钟 小时 日期 月份 星期
+
+  * \* * * * 1,5 /usr/bin/date >> /tmp/date.txt
+
+    星期一和星期五都会执行
+
+  * \* * * * 1-5 /usr/bin/date >> /tmp/date.txt
+
+    星期一到星期五都会执行
+
+  * 15 18 7 7 1-5 /usr/bin/date >> /tmp/date.txt
+
+    如果7月7日是星期一至星期五，则18点的15分钟会执行
+
+  * 30 3 * * 1 /usr/bin/date >> /tmp/date.txt
+
+    星期一的3点30分都会执行
+
+- 查看现有的计划任务
+
+  - crontab -l
+
+  - ls /var/spool/cron/
+
+    会建立文件夹给每个用户保存计划任务
+
+- 配置格式：
+
+  - 分钟 小时 日期 月份 星期 执行的命令
+  - 注意命令的路径问题
+
+#### 计划任务加锁 flock
+
+如果计算机不能按照预期时间运行
+
+- anacontab 延时计划任务
+- flock 锁文件
+
+案例：
+
+* vim /etc/cron.d/0hourly
+
+  延迟计划任务路径(每小时都被运行一次)
+
+* vim /etc/anacontab
+
+  延时计划任务
+
+* vim a.sh
+
+  ```
+  # 文本内容
+  #!/bin/bash
+  
+  # long time
+  sleep 100000
+  # 文本内容
+  ```
+
+* chmod u+x a.sh
+
+* flock -xn "/tmp/f.lock" -c "/root/a.sh"
+
+  排它锁，/tmp/f.lock为产生的锁文件
+
+* flock -xn "/tmp/f.lock" -c "/root/a.sh"
+
+  新打开一个终端执行命令
+
+  无法运行(只能运行一个任务)
+
