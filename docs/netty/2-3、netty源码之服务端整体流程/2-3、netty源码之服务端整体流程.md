@@ -120,6 +120,7 @@ nioserversocketchannel的过程为：
   
 * NioServerSocketChannel 中的属性:
   * ServerSocketChannelConfig config = new NioServerSocketChannelConfig(this, javaChannel().socket())  
+* 注意serversocketc创建的是NioMessageUnsafe，里面的read是不一样的，如果bossevent有connect事件后，read会从servesocketchannel中获取到若干个socketchannel然后对其进行fireread
 
 ## 3. ChannelPipeline  
 服务器端和客户端的 ChannelPipeline 的初始化一致
@@ -150,6 +151,7 @@ nioserversocketchannel的过程为：
 
 * ServerBootstrap调用bind 方法来监听一个本地端口。并绑定NioServerSocketChannel，调用链为：  
    AbstractBootstrap.bind -> AbstractBootstrap.doBind -> AbstractBootstrap.initAndRegister  
+   
    ```
     final ChannelFuture initAndRegister() {
         final Channel channel = channelFactory().newChannel();
@@ -158,11 +160,11 @@ nioserversocketchannel的过程为：
         ChannelFuture regFuture = group().register(channel);
         return regFuture;
     }
-   ```
+  ```
   * 这里 group() 方法返回的是上面我们提到的 bossGroup
   * 这里的 channel 我们也已经分析过了, 它是一个是一个 NioServerSocketChannsl 实例
-  * group().register(channel) 将 bossGroup 和 NioServerSocketChannel 关联起来
-
+* group().register(channel) 将 bossGroup 和 NioServerSocketChannel 关联起来
+   
 * workerGroup 与 NioSocketChannel关联  
   * init(channel)。这个方法主要做什么呢？  
     init 方法在 ServerBootstrap 中重写了, 它为serversocketchannel的 pipeline 中添加了一个 ChannelInitializer（handler）, 而这个 ChannelInitializer 中添加了一个关键的 ServerBootstrapAcceptor handler. 
@@ -267,16 +269,17 @@ void init(Channel channel) throws Exception {
     });
 }
 ```
-* 在initChannel 方法中, 首先通过 handler() 方法获取一个 handler, 如果获取的 handler 不为空,则添加到 pipeline 中. 然后接着, 添加了一个 ServerBootstrapAcceptor 实例.
+* 在initChannel 方法中, 首先通过 handler() 方法获取一个 handler, 如果获取的 handler 不为空,则添加到 pipeline 中. 然后接着, 添加了一个 ServerBootstrapAcceptor 实例.注意这个ChannelInitializer的initChannel 方法在channel和eventloop绑定的时候会被执行掉。即io.netty.channel.AbstractChannel.AbstractUnsafe#register0
 * handler()方法返回的是 handler 字段, 而这个字段就是我们在服务器端的启动代码中设置
   handle()的例子
+  
   ```
     b.group(bossGroup, workerGroup)
     ...
     .handler(new LoggingHandler(LogLevel.INFO))
   ```
 * **当 channel 绑定到 eventLoop 后(在这里是 NioServerSocketChannel 绑定到 bossGroup)中时, 会在 pipeline 中发出 fireChannelRegistered 事件, 接着就会触发 ChannelInitializer.initChannel 方法的调用.**
-* ServerBootstrapAcceptor.channelRead 中会为新建的 Channel 设置 handler 并注册到一个 eventLoop 中
+* ServerBootstrapAcceptor.channelRead 中会为新建的SocketChannel 设置 handler 并注册到一个 eventLoop 之中。注意channelRead方法会使用serversocketchannel的acepte()方法获取到SocketChannel ，然后fire掉，即到达这个ServerBootstrapAcceptor
   ```
     @Override
     @SuppressWarnings("unchecked")
@@ -315,5 +318,28 @@ void init(Channel channel) throws Exception {
 
 * childHandler 是在客户端连接建立以后起作用, 它负责客户端连接的 IO 交互.  
 
-
 ![](handler的绑定.png)
+
+
+
+**serverboostrap启动步骤**
+
+总结下来就是
+
+* ServerBootstrap先实例化serversocketchannel(其中实例化pipline, selector,并持有);
+* ServerBootstrap再堆serversocketchannel进行init，即使用其pipline添加一个ChannelInitializer的handler（作用是serversocketchannel添加ServerBootstrapAcceptor这个handler）
+* ServerBootstrap选取bosseventloopgroup选取一个eventloop进行register serversocketchannel
+  * 开启eventloop线程进行register0
+  * register0将serversocketchannel和其selector进行绑定
+  * 执行fireaddhandler，即执行前面步骤的添加的ChannelInitializer的inithandler将ServerBootstrapAcceptor添加到pipeline之中
+* ServerBootstrap将端口地址bind0绑定到serversocketchannel之中，即执行serverSocketChannel.socket().bind(new InetSocketAddress(8080));
+
+**客户端连接步骤**
+
+* boss的eventloop会轮询selector的状态，当有连接事件时
+* 会调用serversocketchannel中的unsafe的readmessage方法，其中会调用serversocketchannel的accept()的方法创建socketchannel,可能会有多个
+* 遍历上面的socketchannel然后将其fire调用，此时会触发serversocketchannel的pipeline的ServerBootstrapAcceptor的readchannel方法
+* readchannel会获取到childeventloop的一个eventloop进行注册socketchannel，即绑定到其selector之中
+* 并且会把socketchannel的pipeline把用户定义的handler添加进去
+* eventloop会轮询seletor的事件来操作读写
+

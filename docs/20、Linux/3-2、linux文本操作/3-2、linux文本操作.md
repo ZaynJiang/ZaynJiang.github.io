@@ -807,4 +807,353 @@ AWK一般用于对文本内容进行统计、按需要的格式进行输出
 
 ### awk表达式
 
-### 数组
+#### 赋值操作符
+
+- =是最常用的赋值操作符
+  - var1 = “name”
+  - var2 = “hello” “world”
+  - var3 = $1
+- 其他赋值操作符
+  - ++ – += -= *= /= %= ^=
+
+#### 算数操作符
+
+\+ - * / % ^
+
+#### 系统变量
+
+awk自定义的系统变量。
+
+- FS和OFS字段分隔符，OFS表示输出的字段分隔符
+- RS记录分隔符(RS默认是换行符)
+- NR和FNR行数
+- NF字段数量，最后一个字段内容可以用$NF取出
+
+示例：
+
+* head -5 /etc/passwd | awk -F ":" '{print $1}'
+
+  取得第一个变量
+
+* head -5 /etc/passwd | awk 'BEGIN{FS=":"}' '{print $1}'
+
+  注意begin在读取之间进行设置的
+
+* head -5 /etc/passwd | awk 'BEGIN{FS=":"}' '{print $1,$2}'
+
+* head -5 /etc/passwd | awk 'BEGIN{FS=":";OFS="-"}' '{print $1,$2}'
+
+  入和输出的格式不同
+
+* head -5 /etc/passwd | awk '{print NR,$0}'
+
+  输出行号
+
+* awk '{print FNR,$0}' /etc/hosts /etc/hosts
+
+  输出多个文件的行号，FNR每个文件从头开始记录行号，NR累加记录行号。
+
+* head -5 /etc/passwd | awk 'BEGIN{FS=":"}{print NF}' 
+
+  每行字段的个数
+
+* head -5 /etc/passwd | awk 'BEGIN{FS=":"}{print $NF}'
+
+  输出每行字段的内容
+
+#### 关系操作符
+
+ <、 >、<=、 >=、 ==、 !=、 ~、 !~ (~运用在字符匹配上)
+
+#### 布尔操作符
+
+&& || !
+
+#### 判断
+
+条件语句使用if开头，根据表达式的结果来判断执行哪条语句
+
+```
+if(表达式)
+	awk语句1
+[else
+	awk语句2
+]
+```
+
+如果有多个语句需要执行可以使用{ }将多个语句括起来
+
+示例：
+
+```
+user1 70 72 74 76 74 72
+user2 80 82 84 82 80 78
+user3 60 61 62 63 64 65
+user4 90 89 88 87 86 85
+user5 45 60 63 62 61 50
+```
+
+* awk '{if($2>=80) print $1}' kpi.txt
+
+  第二列字段大于等于80进行输出
+
+  ```
+  user2
+  user4
+  ```
+
+* awk '{if($2>=80) {print $1;print $2;} }' kpi.txt
+
+  打印两列
+
+#### 循环
+
+ while循环
+
+```
+while(表达式)
+	awk语句1
+```
+
+do循环
+
+```
+do{
+	awk语句1
+}while(表达式)
+```
+
+for循环
+
+```
+for(初始值;循环判断条件;累加)
+	awk语句1
+```
+
+影响控制的其他语句
+
+- break
+- continue
+
+示例：
+
+awk '{sum=0; for(c=2;c<NF;c++) sum+=$c;print sum/(NF-1)}' kpi.txt
+
+求总成绩和平均成绩，这里sum此处初始化的原因在于当处理第二个用户时不使用上一个sum的值
+
+#### 数组
+
+数组：一组有某种关联的数据(变量)，通过下标依次访问
+
+- 数组名[下标] = 值
+
+- 下标可以使用数字也可以使用字符串
+
+- delete 数组[下标]
+
+   删除某个下标
+
+其语法：
+
+```
+for(变量 in 数组名)
+	使用 数组名[变量]的方式依次对每个数组的元素进行操作
+```
+
+* awk '{ sum=0; for(column=2;column<=NF;column++) sum+=$column; average[$1]=sum/(NF-1)} END{ for(user in average) print user,average[user]}' kpi.txt
+
+  每个用户的平均值
+
+  输出：
+
+  ```
+  user1 73
+  user2 81
+  user3 62.5
+  user4 87.5
+  user5 56.8333
+  ```
+
+* awk '{ sum=0; for(column=2;column<=NF;column++) sum+=$column; average[$1]=sum/(NF-1)} END{ for(user in average) sum2+=average[user];print sum2}' kpi.txt
+
+  新增了平均数之和
+
+#### 命令行参数
+
+- `ARGC` 命令行位置参数个数
+- `ARGV` 命令行位置参数数组
+  - `ARGV[0]` 值是命令名本身, 即 `awk`
+  - `ARGV[1]` 是传入的第1个参数
+  - 范围: `ARGV[0]` ~ `ARGV[ARGC - 1]`
+
+案例：
+
+实现多行之间进行交互
+
+* vim arg.awk
+
+  ```
+  # 文本内容
+  BEGIN{
+  	for(x=0;x<ARGC;x++)
+  		print ARGV[x]
+  	print ARGC
+  }
+  ```
+
+* awk -f arg.awk 11 22 33
+
+  输出：
+
+  ```
+  awk # 命令名称
+  11
+  22
+  33
+  4
+  ```
+
+#### 综合案例
+
+```
+vim result.awk
+# 文本内容
+{
+sum = 0
+for(column = 2; column <= NF;column++)
+	sum += $column
+average[$1] = sum  / (NF-1)
+
+# 字符等级
+if(average[$1] >= 80)
+	letteer = "S"
+else if(average[$1] >= 70)
+	letter = "A"
+else if(average[$1] >= 60)
+	letter = "B"
+else
+	letter = "C"
+	
+print $1,average[$1],leter
+
+letter_all[letter]++  # 所有的字符等级(关联数组方式来计数)
+
+}
+END{
+for(user in average)
+	sum_all += average[user]
+
+avg_all = sum_all / NR
+
+for(user in average)
+	if(average[user] > avg_all)
+		above++
+	else
+		below++
+print "above",above
+print "below",below
+print "S:",letter_all["S"]
+print "A:",letter_all["A"]
+print "B:",letter_all["B"]
+print "C:",letter_all["C"]
+}
+# 文本内容
+awk -f result.awk kpi.txt
+#
+user1 73 A
+user2 81 S
+user3 62.5 B
+user4 87.5 S
+user5 56.8333 C
+average all:72.1667
+above 3
+below 2
+s: 2
+A: 1
+B: 1
+C: 1
+```
+
+### 函数
+
+#### 数组函数
+
+- `length(数组)` 获取数组长度
+- `asort(数组a[, 数组b, ...])` 对数组a的值进行排序，并且会丢掉原先键值(重新生成数字递增的 key 来替代), 并将结果赋予数组 b (若未传, 则直接修改数组 a).
+- `arorti(数组a[, 数组b, ...])` 对数组a的键进行排序, 并将结果赋予数组 b (若未传, 则直接修改数组 a).
+
+#### 算术函数
+
+- `sin()`
+
+- `cos()`
+
+- `atan2(y,x)`
+
+- `exp(x)` 返回自然数 e 的 x 次方
+
+- `sqrt()` 平方根
+
+- `log(x)` 计算 x 的自然对数
+
+- `int()` 转换为整数(忽略小数部分)
+
+- `rand()` 伪随机数, 范围 `[0,1)`, 默认使用 `srand(1)` 初始化随机种子.
+
+  若不使用srand()会发现每次获取的所谓随机数都是一样的.
+
+  srand(); print rand();
+
+- `srand([seed])` 重置随机种子, 默认种子采用当前时间的 epoch 值(秒级别)
+
+#### 位操作函数
+
+- `compl(num)` ` 按位求补
+- `lshift(num, offset)` 左移N位
+- `rshift(num, offset)` 右移N位
+
+#### 字符串函数
+
+awk 中涉及字符索引的函数, 索引位都是从 1 开始
+
+* **查找**
+
+* **替换**
+
+* 截取
+* 分割
+
+#### 时间函数
+
+####  其他函数
+
+* getline
+* close
+* next
+* nextfile
+* return xx
+* system("shell命令")
+* flush([output-expr])
+* close(expr)
+* exit <code=0>
+
+#### 自定义函数
+
+```
+function 函数名(参数) {
+    awk 语句
+    return awk变量
+}
+```
+
+自定义函数的书写不能再 `BEGIN{}`, `{}`, `END{}` 的里层
+
+### 脚本
+
+* vim avg.awk
+
+  将awk编辑成脚本，命令放入脚本文件中
+
+* awk -f avg.awk kpi.txt
+
+  使用-f来运行脚本
