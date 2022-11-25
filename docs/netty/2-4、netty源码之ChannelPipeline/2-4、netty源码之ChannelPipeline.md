@@ -38,7 +38,7 @@ public DefaultChannelPipeline(AbstractChannel channel) {
     head.next = tail;
     tail.prev = head;
 }
-```   
+```
 
 ### 2.3. HeadContext、TailContext的构造器  
 * HeadContext构造方法inbound = false, outbound = true，都会调用了父类 AbstractChannelHandlerContext 的构造器
@@ -79,7 +79,7 @@ b.group(group)
         p.addLast(handler());
         ...
     }
-  ```  
+  ```
   ![](channelpipeline添加hander.png)
 
 * Bootstrap.init 中会调用 p.addLast() 方法, 将 ChannelInitializer 插入到链表末端
@@ -445,6 +445,7 @@ ChannelHandlerContext.close(ChannelPromise)
             unsafe.connect(remoteAddress, localAddress, promise);
         }
      ```
+
     ![](channelpipeline输出事件图.png)  
 
 
@@ -585,4 +586,4 @@ Outbound 事件流: Context.OUT_EVT -> Connect.findContextOutbound -> nextContex
 * Inbound 事件在 Pipeline 中传输方向是 head -> tail
 * 在 ChannelHandler 中处理事件时, 如果这个 Handler 不是最后一个 Hnalder, 则需要调用 ctx.fireIN_EVT (例如 ctx.fireChannelActive) 将此事件继续传播下去. 如果不这样做, 那么此事件的传播会提前终止
 
-&emsp;&emsp;Outbound 事件流: Context.fireIN_EVT -> Connect.findContextInbound -> nextContext.invokeIN_EVT -> nextHandler.IN_EVT -> nextContext.fireIN_EVT
+&emsp;&emsp;Inbound 事件流: Context.fireIN_EVT -> Connect.findContextInbound -> nextContext.invokeIN_EVT -> nextHandler.IN_EVT -> nextContext.fireIN_EVT

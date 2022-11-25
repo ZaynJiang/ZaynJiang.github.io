@@ -164,7 +164,7 @@ nioserversocketchannel的过程为：
   * 这里 group() 方法返回的是上面我们提到的 bossGroup
   * 这里的 channel 我们也已经分析过了, 它是一个是一个 NioServerSocketChannsl 实例
 * group().register(channel) 将 bossGroup 和 NioServerSocketChannel 关联起来
-   
+  
 * workerGroup 与 NioSocketChannel关联  
   * init(channel)。这个方法主要做什么呢？  
     init 方法在 ServerBootstrap 中重写了, 它为serversocketchannel的 pipeline 中添加了一个 ChannelInitializer（handler）, 而这个 ChannelInitializer 中添加了一个关键的 ServerBootstrapAcceptor handler. 
