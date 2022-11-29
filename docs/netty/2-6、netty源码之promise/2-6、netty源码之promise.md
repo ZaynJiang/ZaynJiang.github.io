@@ -267,21 +267,22 @@ Promise接口继续继承了Future，并增加若干个设置状态并回调的�
    ```
  ### 6.1. 状态修改   
  这里设置成功状态为例（setSuccess）
-    ```
+
+
     @Override
     public Promise<V> setSuccess(V result) {
-        if (setSuccess0(result)) {
+    if (setSuccess0(result)) {
             // 调用回调方法
             notifyListeners();
             return this;
-        }
-        throw new IllegalStateException("complete already: " + this);
     }
-
+    throw new IllegalStateException("complete already: " + this);
+    }
+    
     private boolean setSuccess0(V result) {
         return setValue0(result == null ? SUCCESS : result);
     }
-
+    
     private boolean setValue0(Object objResult) {
         // 原子修改result字段为objResult
         if (RESULT_UPDATER.compareAndSet(this, null, objResult) ||
@@ -291,7 +292,7 @@ Promise接口继续继承了Future，并增加若干个设置状态并回调的�
         }
         return false;
     }
-
+    
     private synchronized void checkNotifyWaiters() {
         if (waiters > 0) {
             // 如果有其他线程在等待该promise的结果，则唤醒他们
@@ -342,7 +343,7 @@ Promise接口继续继承了Future，并增加若干个设置状态并回调的�
         }
         return this;
     }
-```  
+```
 所有调用sync方法的线程，都会被阻塞，直到promise被设置为成功或者失败。这也解释了为何Netty客户端或者服务端启动的时候一般都会调用sync方法，本质上都是阻塞当前线程而异步地等待I/O结果返回
 
 ### 6.3. 回调机制  
@@ -377,7 +378,7 @@ Promise接口继续继承了Future，并增加若干个设置状态并回调的�
             listeners = new DefaultFutureListeners((GenericFutureListener<?>) listeners, listener);
         }
     }
-```  
+```
 
 ### 7. 总结  
 Netty的Promise和Future机制是基于Java并发包下的Future开发的。其中Future支持阻塞等待、添加回调方法、判断执行状态等，而Promise主要是支持状态设置相关方法。当底层I/O操作通过Promise改变执行状态，我们可以通过同步等待的Future立即得到结果。  

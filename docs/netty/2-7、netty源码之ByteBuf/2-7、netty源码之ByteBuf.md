@@ -39,7 +39,7 @@ ByteBuf是一个接口，它有众多的实现。子类的命名非常规整，�
     private int markedWriterIndex;
     // 最大容量
     private int maxCapacity;
-```    
+```
 ![](bytebuf属性.png)  
 * 每读取一个字节，readerIndex递增1；直到readerIndex等于writerIndex，表示ByteBuf已经不可读；
 * 每写入一个字节，writerIndex递增1；直到writerIndex等于capacity，表示ByteBuf已经不可写；
@@ -108,7 +108,7 @@ ByteBuf是一个接口，它有众多的实现。子类的命名非常规整，�
     public abstract ByteBuf resetWriterIndex();
     // 16.丢弃已读字节
     public abstract ByteBuf discardReadBytes();
-  ```  
+  ```
 
   * 随机读写数据有关方法，支持指定位置的读写数据，其中读数据并不会改变指针值
   ```
@@ -243,7 +243,7 @@ DuplicatedByteBuf(ByteBuf buffer, int readerIndex, int writerIndex) {
     markWriterIndex();
 }
 
-```    
+```
 注意：
 * 无论是slice还是duplicate，都没有调用retain()方法来改变底层ByteBuf的引用计数。
 * 如果底层ByteBuf调用release()后被释放，那么所有基于该ByteBuf的浅复制对象都不能进行读写。
@@ -268,7 +268,7 @@ private static final class Component {
 
     private ByteBuf slice; // cached slice, may be null
 }
-```  
+```
 * CompositeByteBuf的读写，需要先在components数组里二分查找对应索引所在的Component对象，然后对Component对象所包装的ByteBuf进行读写。  
   ```
     @Override
@@ -307,7 +307,7 @@ private static final class Component {
         throw new Error("should not reach here");
     }
 
-  ```  
+  ```
 
 ## 6. 引用计数  
 bytebuffer的实现会继承AbstractReferenceCountedByteBuf从而拥有引用计数的功能。核心功能使用CAS原子操作和位运算实现。
@@ -318,7 +318,7 @@ bytebuffer的实现会继承AbstractReferenceCountedByteBuf从而拥有引用计
     // even => "real" refcount is (refCnt >>> 1); odd => "real" refcount is 0
     @SuppressWarnings("unused")
     private volatile int refCnt = 2;
-```  
+```
 注意：refCntUpdater是修改refCnt字段的原子更新器。而refCnt是存储引用计数的字段。注意，当前ByteBuf的引用数为 refCnt / 2，因此当refCnt等于1时，引用数为0。  
 
 ### 6.1. 增加引用计数
@@ -348,7 +348,7 @@ retain方法可以增加ByteBuf的引用计数
         }
         return this;
     }
-```    
+```
 
 **注意：每次调用retain()，都会尝试给refCnt加2，所以确保了refCnt恒为偶数，也就是说当前引用数为refCnt / 2。这里为啥设计为递增2而不是递增1，因为这样位运算更加高效吧，而且实际应用中Integer.MAX_VALUE / 2的引用数也是绰绰有余**  
 
@@ -418,7 +418,7 @@ release()操作每次减少引用计数2
         // 如果是奇数，意味着该对象可能已经被释放掉
         throw new IllegalReferenceCountException(0, -decrement);
     }
-```  
+```
 分析如下：    
 1） release0算法流程：
 * 获取当前计数rawCnt，获取实际引用数realCnt；
@@ -430,6 +430,7 @@ release()操作每次减少引用计数2
     * 如果decrement < realCnt，且原子修改引用计数成功，直接返回false；
     * 否则，调用retryRelease0进行循环重试释放。   
   
+
 2） retryRelease0算法流程：
 * 死循环开始；
 * 获取当前计数rawCnt，获取实际引用数realCnt；
@@ -566,12 +567,12 @@ ByteBuf分为两类池化(Pooled)和非池化(Unpooled)。
         }
     };
 
-```  
+```
 * Recycler是一个抽象类，所有的子类都要实现一个newObject方法，用于新建一个子类ByteBuf对象
 * Recycler本质上实现的是一个栈的功能，新建ByteBuf的时候，可以向Recycler申请一个闲置对象；当ByteBuf使用完毕后，可以回收并归还给Recycler  
-     
+  
 * RECYCLER.get()用来获取对象
-   
+  
 ```
  public final T get() {
         if (maxCapacityPerThread == 0) {
@@ -632,7 +633,7 @@ ByteBuf分为两类池化(Pooled)和非池化(Unpooled)。
         recyclerHandle.recycle(this);
     }
 
-```  
+```
 最后调用了handler进行回收。所谓的回收动作，其实就是放回栈中:  
 ```
    static final class DefaultHandle<T> implements Handle<T> {
@@ -663,7 +664,7 @@ ByteBuf分为两类池化(Pooled)和非池化(Unpooled)。
         }
     }
 
-```   
+```
 
 
 ## 8. Unsafe  
