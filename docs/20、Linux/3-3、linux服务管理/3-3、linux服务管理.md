@@ -827,3 +827,323 @@ pdbedit [选项]
   umount /mnt
   umount /mnt2
 
+## nfs服务
+
+主要用于 Linux 之间的共享服务.默认已安装
+
+### 启动步骤
+
+* systemctl start|stop|reload nfs.service
+
+### 配置文件
+
+/etc/exports 主配置文件
+
+* `man 5 exports` 可查看帮助
+
+```bash
+<共享目录> <允许来源主机>(权限)...
+
+                    👆 这里不得有空格
+                    可指定多个
+
+共享目录
+    必须是已存在的目录.
+
+允许来源主机
+    *            # 任意主机
+    具体ip       # 指定该ip可访问
+    
+权限(用逗号分隔)
+    rw                # 读写权限
+    ro                # 只读权限
+    sync            # (内存)数据同步写入磁盘, 避免丢失数据
+    all_squash        # 使用 nfsnobody 系统用户
+```
+
+### 示例
+
+* /data/share *(rw,sync,all_squash)
+
+若权限设置了 `all_squash`, 则会使用 nfsnobody 这个用户来做实际操作, 因此需要将该共享目录的属主和属组设为 nfsnobody
+
+```
+chown -R nfsnobody:nfsnobody /data/share/
+```
+
+### showmount
+
+显示关于 NFS 服务器文件系统挂载的信息
+
+```
+showmount [选项] <host>
+
+选项
+    -e, --exports    # 查看所有共享的目录
+```
+
+示例：
+
+* mount 主机:/path/dir /local/path/to/mount
+
+* mount localhost:/data/share /mnt
+
+  将localhost上共享的 /data/share 目录挂载到本地的 /mnt 目录
+
+## nginx
+
+- Nginx(engine X) 是一个高性能的 Web 和反向代理服务器.
+
+- Nginx 支持 HTTP, HTTPS 和电子邮件代理协议
+
+  Nginx 模块由于是用c/c++编写的, 要添加新模块还需要重新编译.
+
+- OpenResty 是基于 Nginx 和 Lua 实现的 Web 应用网关,集成了大量的第三方模块.
+
+### 安装与管理
+
+#### 安装
+
+* yum-config-manager --add-repo https://openresty.org/package/centos/openresty.repo
+
+  添加 yum 源
+
+* yum install -y openresty
+
+  安装 openresty
+
+#### 管理
+
+systemctl start|reload|stop openresty
+
+### 配置文件
+
+配置文件位于/usr/local/openresty/nginx/conf/nginx.conf
+
+```bash
+worker_processes  1;        # 配置多少个worker进程, 最大值建议不大于CPU核心数
+
+error_log  logs/error.log;
+#error_log  logs/error.log  notice;
+#error_log  logs/error.log  info;
+
+pid        logs/nginx.pid;
+
+events {
+    # use epoll;
+    worker_connections  1024;        # 每个worker允许的并发连接, 超过会返回 503 Service Unavailable 错误
+}
+
+http {
+# 此处的配置会对下面所有 server 生效
+
+    # 访问日志格式定义
+    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+    
+    # 访问日志记录文件及采用的格式配置
+    access_log  logs/access.log  main;
+
+    # sendfile 和 tcp_nopush 是在内核层面上优化传输链路
+    sendfile        on;            # 传输文件时的优化: 直接在内核中将文件数据拷贝给socket.
+    tcp_nopush     on;            # 仅sendfile启用时生效, 将http头和实体一同返回, 减少报文段数量
+
+    keepalive_timeout  65;        # HTTP 协议的 keepalive, 建立长连接, 重用TCP连接
+    
+    gzip  on;                    # 传输时启用 gzip 压缩, 节省带宽, 造成CPU额外消耗.
+
+    server {
+        listen       80;            # 监听端口
+        server_name  localhost;        # 域名(虚拟主机)
+        
+        location / {
+            root   html;
+            index  index.html index.htm;
+        }
+    }
+}
+```
+
+PS：上述配置中的相对路径是基于编译nginx时指定的特定路径。
+
+一般是nginx所在目录, 对应此处是 ``/usr/local/openresty/nginx/`
+
+## LNMP
+
+### mysql
+
+mariadb 是 MySQL 的社区版
+
+* yum install mariadb mariadb-server
+
+  mariadb 是客户端
+
+* 修改配置文件 `/etc/my.cnf`
+
+  ```
+  [mysqld]
+  character_set_server=utf8
+  init_connect='SET NAMES utf8'
+  ```
+
+  或者是采用 utf8mb4 编码, 兼容4字节的unicode, 需要存emoji表情的话应使用 utf8mb4
+
+### PHP
+
+* yum install php-fpm php-mysql
+
+  默认源的版本是 5.4, 需要更高的可以用 webtatic 源
+
+### Nginx
+
+```
+server {
+    location ~ \.php$ {
+        root           html;
+        fastcgi_pass   127.0.0.1:9000;
+        fastcgi_index  index.php;
+        fastcgi_param  SCRIPT_FILENAME  $document_root$fastcgi_script_name;
+        include        fastcgi_params;
+    }
+}
+```
+
+将.php后缀结尾的转发到127.0.0.1:9000端口
+
+通过 fastcgi 协议将请求转发给 php-fpm
+
+## DNS
+
+DNS 服务介绍
+
+- DNS(Domain Name System) 域名系统
+- FQDN(Full Qualified Domain Name) 完全限定域名
+- 域分类: 根域、顶级域(TLD)
+- 查询方式: 递归、迭代
+- 解析方式: 正向解析(主机 -> ip)、反向解析(ip -> 主机)
+- DNS 服务器的类型: 缓存域名服务器、主域名服务器(master)、从域名服务器(salve)
+
+```bash
+www.baidu.com.
+👆        👆      👆
+主机名     域名      根域
+
+
+.com    顶级域
+.        根域
+```
+
+### BIND安装
+
+bind软件提供 DNS 服务
+
+* yum install bind bind-utils
+
+  bind 提供服务的软件包、bind-utils DNS服务的相关工具
+
+* systemctl start named.service
+
+  服务管理
+
+### BIND配置
+
+主配置文件: `/etc/named.conf`
+
+```
+options {
+    listen-on port 53 { any; };        // 监听端口及对应网卡
+    ...    
+    allow-query     { any; };        // any    允许任何人查询
+}
+
+// 根域
+zone "." IN {
+    type hint;
+    file "named.ca";                // /var/named/named.ca
+};
+```
+
+### named-checkconf
+
+```bash
+确认配置文件是否正确
+named-checkconf
+```
+
+## NAS
+
+NAS(Network attached storage)网络附属存储
+
+支持的协议:
+
+- nfs
+- cifs
+- ftp
+
+一般是通过创建磁盘阵列RAID后, 再通过上述协议共享
+
+### 新增硬盘
+
+- /dev/sde
+- /dev/sdf
+
+### 创建共享空间
+
+```bash
+# 磁盘分区
+fdisk /dev/sde
+fdisk /dev/sdf
+
+# 创建 RAID
+## 此处创建 RAID1 级别的磁盘阵列
+mdadm -C /dev/md0 -a yes -l 1 -n 2 /dev/sd{e,f}1
+
+# 持久化 RAID 配置信息
+mdadm --detail --scan --verbose > /etc/mdadm.conf
+
+# 通过逻辑卷的方式以方便后续扩容
+## 初始化物理卷
+pvcreate /dev/md0
+## 创建卷组
+vgcreate vg1 /dev/md0
+## 创建逻辑卷
+### 此处示例, 因此只创建个 200M 的逻辑卷
+lvcreate -L 200M -n nas vg1
+
+# 分区格式化
+mkfs.xfs /dev/vg1/nas
+
+# 分区挂载
+mkdir /share
+mount /dev/vg1/nas /share
+```
+
+### 协议共享
+
+```bash
+# 创建公用用户 shareuser
+useradd shareuser -d /share/shareuser
+echo 123456 | passwd --stdin shareuser
+
+# 1. 配置ftp共享 - 通过 shareuser 用户登录ftp并访问home目录 (也可以用虚拟用户)
+确认 /etc/vsftpd/vsftpd.conf 配置
+    pam_service_name=vsftpd
+    local_enable=YES
+    write_enable=YES
+
+systemctl restart vsftpd.service
+
+# 2. 配置samba服务
+echo -e "123456\n123456" | smbpasswd -a shareuser
+systemctl restart smb.service
+
+# 3. 配置nfs服务
+## 配置为 ro (nfs由于没有用户级别的限制, 因此这种情况下不推荐设置为 rw)
+echo '/share/shareuser *(ro)' >> /etc/exports
+systemctl restart nfs.service
+## 配置为 rw (配合 facl 权限访问控制列表)
+echo '/share/shareuser *(rw,sync,all_squash)' >> /etc/exports
+setfacl -d -m u:nfsnobody:rwx /share/shareuser
+setfacl -m u:nfsnobody:rwx /share/shareuser
+```
