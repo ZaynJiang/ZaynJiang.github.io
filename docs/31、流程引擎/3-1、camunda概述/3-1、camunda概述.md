@@ -307,3 +307,168 @@ https://camunda.com/download/modeler/
 流程与流程实例的关系可以参数面向对象语言的类与对象之前的关系，或者模具与模具生产出来的实体。
 
 ![image-20221206170550661](image-20221206170550661.png) 
+
+## 4. 简单使用
+
+设计一个最简单购物流程， **开始==》加入购物车==》付款 》物流发货》结束**。
+
+
+### 4.1. 设计流程
+
+#### 4.1.1. 定义流程
+
+选择service task类型
+
+![image-20221207171853317](image-20221207171853317.png) 
+
+  配置成外部任务，与业务完全解耦，设置一个topic：shopping_cart
+
+![image-20221207171801368](image-20221207171801368.png) 
+
+其它的类似
+
+点击空白来定义processDefinitionKey为：Process_shopping，方便代码使用
+
+![image-20221207172159240](image-20221207172159240.png)
+
+#### 4.1.2. 保存与部署
+
+按ctrl+s保存
+点击部署按钮部署，发布到流程引擎
+
+![image-20221207172048831](image-20221207172048831.png) 
+
+
+
+### 4.2. 业务代码
+
+新建springboot工程， paython、go语言均有camunda客户端，和流程引擎交互为此处演示的是
+
+#### 4.2.1. 依赖
+
+camunda-external-task-client
+
+```
+<dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.camunda.bpm</groupId>
+            <artifactId>camunda-external-task-client</artifactId>
+            <version>${camunda.external-task-client.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>1.18.24</version>
+        </dependency>
+
+        <dependency>
+            <groupId>javax.xml.bind</groupId>
+            <artifactId>jaxb-api</artifactId>
+            <version>2.3.1</version>
+        </dependency>
+    </dependencies>
+```
+
+#### 4.2.2. 订阅流程
+
+```
+@Component
+@Slf4j
+public class SubscribeTask {
+    //引擎端url 前缀
+    private final static String CAMUNDA_BASE_URL = "http://localhost:8080/engine-rest";
+    private ExternalTaskClient client = null;
+
+    private ExternalTaskClient getClient() {
+        if (client == null) {
+            client = ExternalTaskClient.create()
+                    .baseUrl(CAMUNDA_BASE_URL)
+                    .asyncResponseTimeout(10000) // long polling timeout
+                    .build();
+        }
+        return client;
+    }
+
+    @PostConstruct
+    public void handleShoppingCart() {
+        getClient().subscribe("shopping_cart")
+                .processDefinitionKey("Process_shopping")
+                .lockDuration(2000)
+                .handler((externalTask, externalTaskService) -> {
+                    log.info("订阅到加入购物车任务");
+                    Map<String, Object> goodVariable = Variables.createVariables()
+                            .putValue("size", "xl")
+                            .putValue("count", 2);
+
+                    externalTaskService.complete(externalTask, goodVariable);
+                }).open();
+    }
+
+
+    @PostConstruct
+    public void pay() {
+        getClient().subscribe("pay")
+                .processDefinitionKey("Process_shopping")
+                .lockDuration(2000)
+                .handler((externalTask, externalTaskService) -> {
+                    Object count = externalTask.getVariable("count");
+                    log.info("付款成功，数量{}", String.valueOf(count));
+                    Map<String, Object> goodVariable = Variables.createVariables()
+                            .putValue("toWhere", "南京");
+
+
+                    externalTaskService.complete(externalTask, goodVariable);
+                }).open();
+    }
+
+
+    @PostConstruct
+    public void handleLogisticsDelivery() {
+        getClient().subscribe("logistic_delivery")
+                .processDefinitionKey("Process_shopping")
+                .lockDuration(2000)
+                .handler((externalTask, externalTaskService) -> {
+                    Object toWhere = externalTask.getVariable("toWhere");
+                    log.info("收到发货任务，目的地：{}", String.valueOf(toWhere));
+
+                    externalTaskService.complete(externalTask);
+                }).open();
+    }
+
+
+}
+```
+
+
+
+### 4.3. 启动实例
+
+![image-20221207172330625](image-20221207172330625.png) 
+
+发起流程实例，即启动一次任务，这里传递一个业务key，和一次流程实例绑定，方便后序查询流程数据。
+
+每个实例会有一个business key, 业务主键，也相当于一个流程实例唯一key，一般会与一次业务强相关，比如一个订单号
+
+### 4.4. 验证查看
+
+![image-20221207172638563](image-20221207172638563.png) 
+
+最终各个业务系统会执行成功，外部系统的控制台如下：
+
+```
+2022-12-07 17:40:44.457  INFO 26188 --- [criptionManager] c.y.e.task.demo.shopping.SubscribeTask   : 订阅到加入购物车任务
+2022-12-07 17:40:44.650  INFO 26188 --- [criptionManager] c.y.e.task.demo.shopping.SubscribeTask   : 付款成功，数量2
+2022-12-07 17:40:44.711  INFO 26188 --- [criptionManager] c.y.e.task.demo.shopping.SubscribeTask   : 收到发货任务，目的地：南京
+```
+
+
+
+## 5. 总结
+
+
+
