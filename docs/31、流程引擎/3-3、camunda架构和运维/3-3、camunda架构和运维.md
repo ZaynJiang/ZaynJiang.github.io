@@ -103,6 +103,34 @@ https://camunda-community-hub.github.io/camunda-platform-7-rest-client-spring-bo
 
 #### 3.2.2. postman导入
 
+#### 3.2.3. 外部任务
+
+外部任务是camunda非常重要的特性，它是基于restapi实现的。
+
+![image-20221212195913864](image-20221212195913864.png) 
+
+外部任务的执行大体分三步：
+
+* **Process Engine**: Creation of an external task instance
+* **External Worker**: Fetch and lock external tasks（根据TOPIC订阅拉取）
+* **External Worker & Process Engine**: Complete external task instance
+
+当第3步当处理业务失败时，还可以上报异常给引擎，可以从控制台可视化准确定位到流程实例失败的原因，当然，上报异常时，在异常没消失前会永远卡在失败节点，重试成功后异常会消失，流程往下走
+
+![image-20221212200106537](image-20221212200106537.png) 
+
+**长轮询（Long Polling ）机制**
+
+官网参考：https://docs.camunda.org/manual/7.17/user-guide/process-engine/external-tasks/
+由于外部任务是通过rest api的原理实现的，并且由客户端主动拉取任务，延迟较小
+如果采用普通的HTTP请求定时轮询拉取任务，摘取时间间隔慢了确实会有延迟，轮询太频繁资源开销确实很大，在高并发项目中这没法接受。
+
+因此客户端都设计为长轮询的模式拉取任务，如果没有外部任务可用，请求会被服务器挂起并加锁，防止一个任务被 其他客户端重复消费，一旦出现新的外部任务，就重新激活请求并执行响应。请求挂起的时间可以通过订阅参数配置超时时间，超时后释放锁且不再挂起
+
+![image-20221212200856450](image-20221212200856450.png) 
+
+
+
 ## 4. 数据模型
 
 ![image-20221208164628511](image-20221208164628511.png) 
@@ -195,9 +223,9 @@ camunda7.17.0共有49张表，都以ACT_开头，共分为五大类：
 
 
 
-## 7. 有用的配置
+## 7. 常见配置
 
-#### 7.1. 历史数据配置
+### 7.1. 历史数据配置
 
 camunda工作流的数据都存储在数据库中，历史数据会非常大，可以根据需要，选择存储历史数据的级别，camunda支持的级别如下：
 
@@ -234,6 +262,44 @@ springboot配置中可以加入:
 ```
 camunda.bpm.auto-deployment-enabled=false
 ###自动部署resources下面的bpmn文件
+```
+
+### 7.3. 接口鉴权 
+
+https://docs.camunda.org/manual/7.17/reference/rest/overview/authentication/
+前面所有的示例中外部任务订阅是通过rest api的基础上实现的，都没有带任何身份校验直接可以访问，数据案例存在很大问题，生产环境中不可接受。
+
+#### 7.3.1. 添加权限过滤器
+
+这个配置方法官网只给出了web.xml中配置方法，以下是工作中springboot中配置使用过的方法。
+com.forestlake.camunda.AuthFilterConfig
+
+```
+@Configuration
+public class AuthFilterConfig implements ServletContextInitializer {
+    @Override
+    public void onStartup(ServletContext servletContext) throws ServletException {
+        FilterRegistration.Dynamic authFilter = servletContext.addFilter("camunda-auth", ProcessEngineAuthenticationFilter.class);
+        authFilter.setAsyncSupported(true);
+        authFilter.setInitParameter("authentication-provider","org.camunda.bpm.engine.rest.security.auth.impl.HttpBasicAuthenticationProvider");
+        authFilter.addMappingForUrlPatterns(null,true,"/engine-rest/*");
+    }
+}
+```
+
+#### 7.3.2. 配置账号
+
+控制台添加用户javaclient，密码123456，并加入一个组中获取组权限
+
+![image-20221212212855555](image-20221212212855555.png) 
+
+
+
+#### 7.3.3. 客户端配置
+
+```
+camunda.bpm.client.basic-auth.username=javaclient
+camunda.bpm.client.basic-auth.password=123456
 ```
 
 ## 8. 多租户设计
