@@ -362,6 +362,50 @@ public class NoticeCustomerStartListener implements ExecutionListener {
 
 ### 2.3. 多实例任务
 
+多实例任务，是指一个类型的任务需要循环执行多次，包括串行多实例任务和并行多实例任务。
+
+![image-20221213163253743](image-20221213163253743.png) 
+
+#### 2.3.1. 串行任务
+
+* 点任务 - 设置(点小扳手) - 点 三个竖线或者横线。
+
+* 在右侧的属性面板填写：
+  Collection：
+
+  它表示一个集合Element Variable：写一个变量名，它表示遍历上面的集合元素使用的标识。然后就可以使用变量 ${ 变量名 } 了。
+
+* Assignee 
+
+  分配到任务的人填写 ${ 变量名 }。
+
+* Loop **Cardinality**
+
+  当没有设置Collection的时候，可以通过此变量设置循环的次数
+
+![image-20221213163634844](image-20221213163634844.png)
+
+ 
+
+**Loop** **Cardinality**当没有设置Collection的时候，可以通过此变量设置循环的次数。
+
+#### 2.3.2. 并行任务
+
+假设需求是三个领导中的任意两个审批通过即可完成请假。任意两个就不能串行。
+
+在并行任务运行中有内置几个变量如下：
+
+- nrOfActiviteInstances：当前活动的实例数量，即还没有完成的实例数量
+- loopCounter ：循环计数器，办理人在列表中的索引
+- nrOfInstances：多实例任务中总共的实例数
+- nrOfCompletedInstances：已经完成的实例数量
+
+可以通过设置Completion Condition 为${ nrOfCompletedInstances == 2} 表示任意两个人完成审批
+
+![image-20221213164503279](image-20221213164503279.png) 
+
+
+
 ### 2.4. 脚本任务
 
 ### 2.5. 发送任务
