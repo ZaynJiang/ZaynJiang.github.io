@@ -1167,3 +1167,127 @@ BPMN规范中将参与者(participant)进行分类分组，泳池(pool)一般用
 
 ![image-20221227165313381](image-20221227165313381.png) 
 
+## 7. 连接器
+
+camunda工作流设计的与外部信息沟通的方法有外部任务(external task)，业务任务(service task)，执行监听器（execution listener),
+
+以上都是当外部业务较复杂的时候使用，如果外部调用很简单，仅是调用远程直接获取一些状态数据，可以使用camunda提供的连接器connector实现。
+
+默认支援的connector类型：
+**http connector**
+
+用于请求协议的接口。
+
+- 引擎内部存在一个Conectors类会自动探测Classpath下的所有connector，根据ConnectorID生成实例；
+- 默认情况下使用Apache 默认配置的 http client调用；
+- 返回数据使用spin json读取；
+- 自定义http client;
+
+### 7.1. 引擎引入
+
+#### 7.1.1. 依赖
+
+```
+<dependency>
+      <groupId>org.camunda.bpm</groupId>
+      <artifactId>camunda-engine-plugin-connect</artifactId>
+      <version>7.17.0</version>
+    </dependency>
+```
+
+#### 7.1.2. 代码
+
+实现ConnectorConfigurator
+
+```
+
+import connectjar.org.apache.http.impl.client.CloseableHttpClient;
+import connectjar.org.apache.http.impl.client.HttpClients;
+import org.camunda.connect.httpclient.HttpConnector;
+import org.camunda.connect.httpclient.impl.AbstractHttpConnector;
+import org.camunda.connect.spi.ConnectorConfigurator;
+
+public class HttpConnectorConfigurator implements ConnectorConfigurator<HttpConnector> {
+    public Class<HttpConnector> getConnectorClass() {
+        return HttpConnector.class;
+    }
+
+    public void configure(HttpConnector connector) {
+        CloseableHttpClient client = HttpClients.custom()
+                .setMaxConnPerRoute(10)
+                .setMaxConnTotal(200)
+                .build();
+        ((AbstractHttpConnector) connector).setHttpClient(client);
+    }
+}
+```
+
+#### 7.1.3. 配置SPI加载
+
+为了自动控制新的配置，camunda采用SPI机制加载用户配置。resources/META-INF/services
+
+![image-20221229160610203](image-20221229160610203.png) 
+
+#### 7.1.4. 其它
+
+soap connector:**用于请求soap协议的webservice等接口。这里只介绍一下http connector，soap有用到的可以参考文档 https://docs.camunda.org/manual/7.17/reference/connect/soap-connector/
+
+### 7.2. 设计流程
+
+假设医疗体检系统，根据顾客ID请求用户系统获取顾客信息，如果是男士走男士体检流程，女士走女士体检流程.
+模拟一个mock用户信息的接口，当id为偶数时为男，奇数时为女。
+
+开始事件添加启动表单字段id
+
+![image-20221229160737848](image-20221229160737848.png) 
+
+获取用户HTTP connector任务
+
+![image-20221229160749448](image-20221229160749448.png) 
+
+![image-20221229160803272](image-20221229160803272.png) 
+
+![image-20221229160826026](image-20221229160826026.png) 
+
+排他网关判断男女
+
+![image-20221229160837018](image-20221229160837018.png) 
+
+![image-20221229160845534](image-20221229160845534.png) 
+
+男士女士体检套餐任务
+
+![image-20221229160856540](image-20221229160856540.png) 
+
+![image-20221229160903718](image-20221229160903718.png)
+
+代码
+
+```
+@Configuration
+public class HealthCheckExternalService {
+    @Bean
+    @ExternalTaskSubscription(topicName = "male_health_plan", processDefinitionKeyIn = {"Process_http_connector"},lockDuration=50000)
+    public ExternalTaskHandler maleHealthPlan() {
+        
+        return (externalTask, externalTaskService) -> {
+            System.out.println("男士体检套餐");
+            externalTaskService.complete(externalTask);
+            
+        };
+    }
+    
+    @Bean
+    @ExternalTaskSubscription(topicName = "female_health_plan", processDefinitionKeyIn = {"Process_http_connector"},lockDuration=50000)
+    public ExternalTaskHandler femaleHealthPlan() {
+        
+        return (externalTask, externalTaskService) -> {
+            System.out.println("女士体检套餐");
+            externalTaskService.complete(externalTask);
+            
+        };
+    }
+```
+
+### 7.3. 验证
+
