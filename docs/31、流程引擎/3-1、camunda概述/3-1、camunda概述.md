@@ -2,7 +2,7 @@
 
 ### 1.1. 什么是工作流
 
-工作流起源于办公自动化，是对软件中业务流程的抽象。通过工作流将各个任务有序组织起来形成一个完整的业务闭环。   比如：请假审批流程，网上购物流程，银行贷款流程；
+工作流起源于办公自动化，是对软件中业务流程的抽象。通过工作流将各个任务有序组织起来形成一个完整的业务闭环。比如：请假审批流程，网上购物流程，银行贷款流程；
 
 ![image-20221206143636084](image-20221206143636084.png) 
 
@@ -96,10 +96,16 @@ camunda工作流源自activity5，是德国一家工作流程自动化软件开�
 ### 2.1. 协议支持
 
 - BPMN2（Business Process Model and Notation业务流程模型标记）
+
 - CMMN ( Case Management Model and Notation.案例管理模型标记)
+
 - DMN（Decision Model and Notation决策模型标记）
 
+  ![image-20230103165524639](image-20230103165524639.png) 
+
 ### 2.2. 优势
+
+#### 功能
 
 - 高性能（乐观锁，缓存机制）
 - 高扩展性
@@ -108,6 +114,69 @@ camunda工作流源自activity5，是德国一家工作流程自动化软件开�
 - 完善rest api
 - 支持多租户
 - 优秀的流程设计器
+
+#### 性能
+
+网上资料：通过flowable和camunda多组对比测试，camunda性能比flowablet提升最小10%，最大39%，而且camunda无报错，flowable有报错，camunda在高并发场景下稳定性更好。
+
+参考：https://lowcode.blog.csdn.net/article/details/109030329
+
+**对比：**
+
+
+
+>   由于Flowable与Camunda好多功能都是类似的，因此在这里重点罗列差异化的功能
+>
+>   camunda支持****\*流程实例的迁移\*****，比如同一个流程有多个实例，多个流程版本，不同流程实例运行在不同的版本中，camunda支持任意版本的实例迁移到指定的流程版本中，***并可以在迁移的过程中支持从哪个节点开始***。
+>   
+>
+>   camunda基于PVM技术，所以用户从Activii5迁移到camunda基本上毫无差异。flowable没有pvm了，所以迁移工作量更大（实例的迁移，流程定义的迁移、定时器的迁移都非常麻烦）。
+>   
+>
+>   camunda对于每一个CMD命令类都提供了***权限校验机制***，flowable没有。
+>   camunda继续每一个***API都有批处理的影子***，flowable几乎没有。比如批量挂起流程、激活流程等，使用***camunda可以直接使用API操作***，使用Flowable则只能自己去查询集合，然后循环遍历集合并操作。
+>   camunda很多API均支持批处理，在批量处理的时候可以指定是***异步方式操作或者是同步方式操作***。异步的话定时器会去执行。Flowable没有异步批处理的机制。比如批量异步删除所有的历史数据。
+>   
+>
+>    camunda启动实例的时候***支持从哪个节点开始***，而不是仅仅只能从开始节点运转实例。Flowable仅仅只能从开始节点运转实例。
+>   camunda支持任意节点的跳转，可以跳转到连线也可以跳转到节点，并且在跳转的过程中***支持是否触发目标节点的监听器***。flowable没有改原生API需用户去扩展。
+>   camunda支持链式生成流程，比如
+>     Bpmn.createExecutableProcess(PROCESS_KEY)
+>          .camundaHistoryTimeToLive(5)
+>          .startEvent()
+>          .userTask()
+>          .endEvent().done(); flowable不支持。
+>  
+>
+>    camunda支持***双异步机制***，第一个异步即***节点可以异步执行***，第二个异步方式是：****\*完成异步任务后，还可以继续异步去执行任务后面的连线\*****。所以称之为双异步机制，flowable只有第一种异步方式。
+>
+> 
+>   camunda支持多种脚本语言，这些脚本语言可以在连线上进行条件表达式的配置，开箱即用。比如python、ruby、groovy、JUEL。flowable仅仅支持JUEL、groovy。开箱即用的意思就是如果想用python直接引入jython包就可以用了，不需要额外配置。
+>
+>
+>   camunda支持外部任务，比如我们有时候想在一个节点中执行调用第三方的API或者完成一些特定的逻辑操作，就可以使用外部任务，外部任务有两种表，并支持第三方系统定期来抓取并锁定外部任务，然后执行业务完毕之后，完成外部任务，流程实例继续往下执行。***\*外部任务的好处就是解决了分布式事物的问题\****。在flowable中我们可以使用httpTask任务，我个人更倾向于camunda外部任务，因为这个外部任务有外部系统决定什么时候完成，httpTask是不等待任务，实例走到这个节点之后，调用一个api就直接往下跑了，外部任务不会继续往下跑，由外部系统去决定啥时候往下跑。
+>
+> 
+>    camunda支持为用户定制一些个性化的偏好查找API，比如张三每次查询任务的时候，一般固定点击某某三个查询条件过滤数据，使用camunda就可以将这三个查询条件进行持久化，下次张三来了，就可以直接根据他的偏好进行数据的过滤，类似机器学习。
+>
+> 
+>   camunda支持历史数据的批量删除或者批量迁移到其他介质，比如批量迁移到es，flowable没有该机制。
+>   camunda支持在高并发部署流程的时候，***是否使用锁机制***，flowable没有该机制。
+>   camunda支持单引擎多组合、多引擎多库。flowable仅仅支持单引擎多组合。
+>   camunda支持流程实例跨流程定义跳转，flowable没有该机制。
+>   camunda支持***分布式定时器***，flowable没有该机制。
+>   flowable支持nosql,camunda只有nosql的解决方案。
+>
+>
+>   camunda支持***优化流程***，以及了解流程引擎的瓶颈所在和每个环节的耗时，flowable没有该机制。
+>   camunda修改了流程模板xml解析方式，相比flowable性能更好。
+>   camunda在解析流程模板xml的时候，去除了activiti5的双解析机制，相对而言耗时时间更短。flowable没有了pvm所以规避了双解析机制。关于双解析机制可以参考《Activiti权威指南》一书。
+>   camunda可以在***任意节点添加任意的属性***，flowable原生API没有，需要自己扩展。
+>   camunda框架没有为流程生成图片的API(所有流程图展示以及高亮均在前端动态计算)，activiti5/6/flowable5/flowable6有图片生成以及高亮的API.
+>   camunda可以在***节点中定义定时作业的优先级***，也可以在流程中进行全局优先级的定义。当节点没有定义优先级的时候可以使用全局的优先级字段。activiti5/6/flowable5/flowable6没有该功能。
+>   camunda可以再流程中定义流程的tag标记，activiti5/6/flowable5/flowable6没有改功能。
+>   camunda/activiti5/6/flowable5/flowable6 均不支持国产数据库，比如人大金仓 和 达梦。
+>   flowable6支持LDAP，openLDAP,camunda不支持。activiti5不支持
 
 ### 2.3. camunda现状
 
@@ -373,6 +442,10 @@ https://camunda.com/download/modeler/
 流程与流程实例的关系可以参数面向对象语言的类与对象之前的关系，或者模具与模具生产出来的实体。
 
 ![image-20221206170550661](image-20221206170550661.png) 
+
+![image-20230104143614407](image-20230104143614407.png) 
+
+
 
 ## 4. 简单示例
 
