@@ -82,6 +82,8 @@ FSA是一个FSM(有限状态机)的一种，特性如下:
 
 ### 2.3. FST介绍
 
+https://www.cnblogs.com/lyc-code/p/15873576.html
+
 上面的是fsa，只能说节省了空间，但是没有单词对应的值，而这个Ordered maps就像一个普通的map，只不过它的key是有序的，它有对应的值。我们来看一下如何使用**确定无环状态转换器（Deterministic acyclic finite state transducer， FST）**来实现它。
 
 FST是也一个有限状态机（FSM）,具有这样的特性：
