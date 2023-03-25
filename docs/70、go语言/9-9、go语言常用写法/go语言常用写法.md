@@ -12,6 +12,12 @@
 
   v为rune类型 ，是否包含
 
+* 是否包含
+
+  strings.Contains(s, string(s[i] + 32))) 
+
+  (s[i] >= 97 && !strings.Contains(s, string(s[i] - 32))
+
 * strings.Fields(sentence)
 
   按空格切割字符串
