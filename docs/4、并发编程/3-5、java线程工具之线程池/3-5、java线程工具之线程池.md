@@ -9,10 +9,10 @@
 * Shutdown方法，停止接收新任务，等待所有的任务执行完后，关闭线程池。
 * ShutdownNow，停止接收新任务，任务都关闭。
 * Excutors提供了四种创建线程的方法
-* newSingleThreadExecutor，单线程池
-* newFixedThreadPool，固定大小的线程池，队列无限大
-* newCachedThreadPool，可缓存的线程池，核心为0，线程数无线大，但可以回收。
-* newScheduledThreadPool，支持时间和周期的线程池  
+  * newSingleThreadExecutor，单线程池
+  * newFixedThreadPool，固定大小的线程池，队列无限大
+  * newCachedThreadPool，可缓存的线程池，核心为0，线程数无线大，但可以回收。
+  * newScheduledThreadPool，支持时间和周期的线程池  
 
 
 ## 3. 线程池原理
@@ -22,6 +22,7 @@
 * 线程数大于核心数，添加至队列
 * 线程数大于核心数，队列满了，尝试新增新增线程设置为非核心，如果成功返回，不成功则拒绝。  
   
+
 **注意：由此可见只有阻塞队列满了后，才会创建非核心线程**     
 
 ### 3.2. 线程池参数  
@@ -100,7 +101,7 @@ Java原生线程池偏向cpu密集，如果创建过多的线程反而会降低�
         r.setXXX(x);
     }
     }
-  ```  
+  ```
 
   ### 4.2. future task工具类  
   FutureTask是一个纯工具类，FutureTask 实现了 Runnable 和 Future 接口，所以它即可以当作任务提交，也可以获取执行结果。  
@@ -113,7 +114,7 @@ Java原生线程池偏向cpu密集，如果创建过多的线程反而会降低�
     es.submit(futureTask);
     // 获取计算结果
     Integer result = futureTask.get();
-  ```  
+  ```
 在之前我们用CompletableFuture实现了烧水泡茶，这里我们可以用future task来实现
 
 ```
@@ -180,7 +181,7 @@ T2: 拿茶叶...
 T1: 拿到茶叶: 龙井
 T1: 泡茶...
 上茶: 龙井
-```  
+```
 *  创建了两个 FutureTask——ft1 和 ft2
 *  ft1 完成洗水壶、烧开水、泡茶的任务
 *  ft2 完成洗茶壶、洗茶杯、拿茶叶的任务
@@ -207,7 +208,7 @@ T1: 泡茶...
         Integer r = cs.take().get();
         executor.execute(()->save(r));
     }
-   ```  
+   ```
    但是生产环境一般不这么使用，jdk提供了线程的解决方案
  ### 5.2. CompletionService 
  &emsp;&emsp;CompletionService 的实现原理也是内部维护了一个阻塞队列，当任务执行结束就把任务的执行结果加入到阻塞队列中，不同的是 CompletionService 是把任务执行结果的 Future 对象加入到阻塞队列中，而上面的示例代码是把任务最终的执行结果放入了阻塞队列
@@ -239,7 +240,7 @@ for (int i=0; i<3; i++) {
   executor.execute(()->save(r));
 }
 
-```  
+```
 * 创建了一个线程池 executor 、一个 CompletionService 对象 cs 和一个Future<Integer>类型的列表 futures
 * 每次通过调用 CompletionService 的 submit() 方法提交一个异步任务，会返回一个 Future 对象，我们把这些 Future 对象保存在列表 futures 中。
 * 通过调用 cs.take().get()，我们能够拿到最快返回的任务执行结果

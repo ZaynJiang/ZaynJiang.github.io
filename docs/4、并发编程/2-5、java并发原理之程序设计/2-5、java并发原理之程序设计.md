@@ -6,6 +6,7 @@
 
 * 将共享变量作为对象属性封装在内部，对所有公共方法制定并发访问策略  
   比如很对线程都需要用一个计数器对象，我们将计数的相关操作都封装到counter内部了  
+  
     ```
     public class Counter {
     private long value;
@@ -82,3 +83,4 @@ public class SafeWM {
 * java的管程模式有哪些？
 
 * java的状态流转是什么？
+

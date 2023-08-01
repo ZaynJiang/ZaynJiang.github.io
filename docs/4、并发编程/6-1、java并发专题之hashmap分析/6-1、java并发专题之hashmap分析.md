@@ -621,6 +621,8 @@ hashmap不是线程安全的，不同版本的线程安全问题不一样：
   ![](java7多线程rehash4.png) 
 
   e.next = newTable[i] 导致 key(3).next 指向了 key(7)
+  
+  ![image-20230705095016283](image-20230705095016283.png)
 
 ### 6.2. 脏写
 
