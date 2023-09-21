@@ -754,3 +754,489 @@ ParameterMappingTokenHandler 也继承了 BaseBuilder，其中各个字段的含
 ParameterMappingTokenHandler.handleToken0方法的实现会调用 buildParameterMapping0万法解析参数属性，并将解析得到的 ParameterMapping 对象添加到 parameterMappings 集合中实现如下: 
 
 ![image-20230915103846705](image-20230915103846705.png) 
+
+![image-20230918110148245](image-20230918110148245.png)  
+
+![image-20230918110159569](image-20230918110159569.png) 
+
+![image-20230918110208075](image-20230918110208075.png) 
+
+![image-20230918110217006](image-20230918110217006.png) 
+
+![image-20230918111549156](image-20230918111549156.png) 
+
+BoundSql 中还提供了从 additionalParameters 集合中获取/设置指定值的方法，主要是通过metaParameters 相应方法实现的，代码比较简单；
+
+### DynamicSqlSource
+
+​	DynamicSqlSource 负责解析动态 SQL 语句，也是最常用的 SqSource 实现之一。SgINode 中使用了组合模式，形成了一个树状结构，DynamicSglSource 中使用rootSqINode 字段(SqINode类型)记录了待解析的SqlNode 树的根节点。DynamicSglSource 与MappedStatement 以及 SqINode
+
+![image-20230918112915741](image-20230918112915741.png) 
+
+![image-20230918112925280](image-20230918112925280.png) 
+
+### RawSqlSource
+
+RawSqlSource 是SqlSource 的另一个实现，其逻辑与 DynamicSglSource 类似，但是执行时
+
+机不一样，处理的 SOL 语句类型也不一样。前面介绍XMLScriptBuilder,parseDynamicTags0方法时提到过，如果节点只包含“#分”占位符，而不包含动态 SQL节点或未解析的“S分”占位符的话，则不是动态SOL 语句，会创建相应的 StaticTextSalNode 对象。在 XMLScriptBuilderparseScriptNode0方法中会判断整个 SOL节点是否为动态的，如果不是动态的 SOL节点，则创建相应的 RawSglSource 对象。
+RawSglSource 在构造方法中首先会调用 getSql0方法其中通过调用 SINodeapply0方法完成SOL语句的拼装和初步处理;之后会使用 SqlSourceBuilder 完成占位符的替换和ParameterMapping 集合的创建，并返回 StaticSqlSource 对象。这两个过程的具体实现前面已经介绍了，不再重复。
+下面简单介绍一下RawSglSource 的具体实现:
+
+![image-20230918114019691](image-20230918114019691.png) 
+
+![image-20230918114027197](image-20230918114027197.png) 
+
+无论是 StaticSglSource、DynamicSqlSource 还是RawSqlSource，最终都会统一生成 BoundSql对象其中封装了完整的SQL语句(可能包含“?”占位符)、参数映射关系(parameterMappings 集合)以及用户传入的参数(additionalParameters集合)。另外，DynamicSglSource 负责处理动态SOL语句，RawSglSource 负责处理静态SOL语句。除此之外，两者解析 SQL 语句的时机也不一样，前者的解析时机是在实际执行 SOL 语句之前，而后者则是在MyBatis 初始化时完成SQL语句的解析。
+
+## 结果集
+
+MyBatis 会将结果集按照映射配置文件中定义的映射规则，例如<resultMap>节点、resultType 属性等，映射成相应的结果对象。这种映射机制是 MyBatis
+的核心功能之一，可以避免重复的JDBC代码。在StatementHandler 接口在执行完指定的 select 语句之后，会将查询得到的结果集交给ResultSetHandler 完成映射处理。ResultSetHandler 除了负责映射 select 语句查询得到的结果集还会处理存储过程执行后的输出参数。
+ResultSetHandler 是一个接口，其定义如下:
+
+![image-20230918143458953](image-20230918143458953.png) 
+
+​	DefaultResultSetHandler 是 MyBatis 提供的 ResultSetHandler 接口的唯一实现DefaultResutSetHandler 中的核心字段的含义如下，这些字段是在 DefaultResultSetHandler 中多个方法中使用的公共字段；
+
+### handleResultSets
+
+### ResultSetWrapper
+
+对DefaultResultSetHandler,getNextResultSet0)方法的分析中，可以看到DefaultResultSetHandler 在获取 ResultSet 对象之后，会将其封装成 ResultSetWrapper 对象再进行处理。在ResultSetWrapper 中记录了 ResultSet 中的一些元数据，并且提供了一系列操作 ResultSet的辅助方法。首先来看 ResultSetWrapper 中核心字段的含义:
+
+![image-20230919105209128](image-20230919105209128.png) 
+
+ResultSetWrapper 中提供了查询上述集合字段的相关方法，代码比较简单，这里就不贴出来了。其中需要介绍的是getMappedColumnNames0方法，该方法返回指定 ResutMap 对象中明确映射的列名集合，同时会将该列名集合以及未映射的列名集合记录到mappedColumnNamesMap和unMappedColumnNamesMap 中缓存。
+
+ResultSetWrapper.getUnmappedColumnNames(方法与 getMappedColumnNames()方法类似,不再赘述；
+
+### 简单映射
+
+#### 整体步骤
+
+![image-20230919105556886](image-20230919105556886.png) 
+
+![image-20230919105606803](image-20230919105606803.png) 
+
+DefaultResultSetHandlerhandleRowValues0)方法是映射结果集的核心代码，其中有两个分支:一个是针对包含嵌套映射的处理，另一个是针对不含嵌套映射的简单映射的处理。
+
+![image-20230919110010715](image-20230919110010715.png) 
+
+![image-20230919110031533](image-20230919110031533.png) 
+
+handleRowValuesForSimpleResultMap0方法的大致步骤如下:
+
+* 调用skipRows(方法，根据 RowBounds 中的 offset 值定位到指定的记录行
+* 调用 shouldProcessMoreRows0方法，检测是否还有需要映射的记录。
+* 通过resolveDiscriminatedResultMap0方法，确定映射使用的 ResultMap 对象。
+* 调用getRowValue0方法对 ResultSet 中的一行记录进行映射:
+  * 通过 createResultObject0方法创建映射后的结果对象。
+  * 通过 shouldApplyAutomaticMappings0方法判断是否开启了自动映射功能
+  * 通过applyAutomaticMappings0方法自动映射 ResultMap 中未明确映射的列。
+  * 通过applyPropertyMappings0方法映射 ResultMap 中明确映射列，到这里该行记d录的数据已经完全映射到了结果对象的相应属性中。
+* 调用 storeObject0方法保存映射得到的结果对象
+
+#### 源码
+
+DefaultResultSetHandlerhandleRowValuesForSimpleResultMap()方法的具体实现如下:
+
+![image-20230919111223254](image-20230919111223254.png) 
+
+上面涉及 DefaultResultHandler 和 DefaultResultContext 两个辅助类。DefaultResultHandler继承了 ResultHandler 接口，它底层使用 list 字段(ArrayList<Object>类型)暂存映射得到的结果对象。另外， ResultHandler 接口还有另一个名为 DefaultMapResultHandler 的实现，它底层使用mappedResults 字段(Map<K,V>类型)暂存结果对象。DefaultResultContext继承了 ResultContext 接口，DefaultResultContext 中字段含义如下:
+
+![image-20230919111832432](image-20230919111832432.png) 
+
+#### skipRows
+
+定的记录，具体实现如下:DefaultResultSetHandler.skipRows()方法的功能是根据 RowBounds.offset 字段的值定位到指
+
+![image-20230919112350153](image-20230919112350153.png) 
+
+![image-20230919112323506](image-20230919112323506.png) 
+
+#### shouldProcessMoreRows
+
+定位到指定的记录行之后，通过 DefaultResultSetHandlershouldProcessMoreRows()检测是否能够对后续的记录行进行映射操作，具体实现如下:
+
+![image-20230919112438880](image-20230919112438880.png) 
+
+#### resolveDiscriminatedResultMap
+
+DefaultResultSetHandlerresolveDiscriminatedResultMap0方法会根据 ResultMap 对象中记录的 Discriminator 以及参与映射的列值，选择映射操作最终使用的 ResultMap 对象，这个选择过程可能嵌套多层。
+这里通过一个示例简单描述 resolveDiscriminatedResultMap0方法的大致流程，示例如图所示，现在要映射的 ResultSet 有 col1~4 这4 列其中有一行记录的4 列值分别是[1,2,3,4]，映射使用的<resultMap>节点是result1。通过resolveDiscriminatedResultMap0方法选择最终使用的 ResultMap 对象的过程如下:
+
+* 结果集按照 result1 进行映射,该行记录 col2 列值为2根据<discriminator>节点配置会选择使用result2对该记录进行映射。
+* 又因为该行记录的 col3 列值为 3，最终选择 result3 对该行记录进行映射，所以该行记录的映射结果是SSubA 对象
+
+![image-20230920092719101](image-20230920092719101.png) 
+
+![image-20230919113504266](image-20230919113504266.png) 
+
+![image-20230919113513037](image-20230919113513037.png) 
+
+#### createResultObject
+
+通过resolveDiscriminatedResultMap0方法的处理,最终确定了映射使用的 ResultMap 对象。之后会调用 DefaultResultSetHandler.getRowValue0完成对该记录的映射，该方法的基本步骤如下:
+
+* 根据 ResultMap 指定的类型创建对应的结果对象，以及对应的 MetaObject 对象。
+* 根据配置信息，决定是否自动映射 ResultMap 中未明确映射的列。
+* 根据ResultMap 映射明确指定的属性和列
+* 返回映射得到的结果对象。
+
+DefaultResultSetHandler.getRowValue0方法的代码如下:
+
+![image-20230920093705769](image-20230920093705769.png) 
+
+![image-20230920093713351](image-20230920093713351.png) 
+
+DefaultResultSetHandler.createResultObject0方法负责创建数据库记录映射得到的结果对象,该方法会根据结果集的列数、ResultMap.constructorResultMappings 集合等信息，选择不同的方式创建结果对象，具体实现如下:
+
+![image-20230920093830117](image-20230920093830117.png) 
+
+下面是 createResultObiect0方法的重载，它是创建结果对象的核心，具体实现如下:
+
+![image-20230920094503266](image-20230920094503266.png)
+
+#### createParameterizedResultObject
+
+上述四种场景中，场景1(使用 TypeHandler 对象完成单列 ResutSet 的映射)以及场景3(使用 ObjectFactory 创建对象)的逻辑比较简单，
+ResultMap 中记录了<constructor>节点信息)的处理过程，此场景通过调用createParameterizedResultObject0方法完成结果对象的创建，该方法会根据<constructor>节点的配置，选择合适的构造方法创建结果对象，其中也会涉及嵌套查询和嵌套映射的处理。具体实现如下:
+
+![image-20230920095918104](image-20230920095918104.png) 
+
+#### shouldApplyAutomaticMappings
+
+​	如果ResultMap中没有记录<constructor>节点信息且结果对象没有无参构造函数，则进入场景 4 的处理。在场景 4 中，会尝试使用自动映射的方式查找构造函数并由此创建对象。首先会通过 shouldApplyAutomaticMappings0检测是否开启了自动映射的功能，该功能会自动映射结果集中存在的，但未在 ResultMap 中明确映射的列。
+​	控制自动映射功能的开关有下面两个:
+
+* 在 ResultMap 中明确地配置了 autoMapping 属性，则优先根据该属性的值决定是否开启自动映射功能。
+* 如果没有配置autoMapping 属性，则在根据 mybatis-config.xml中<settings>节点中配置的 autoMappingBehavior 值 (默认为 PARTIAL)定是否开启自动映射功能。autoMappingBehavir 用于指定 MyBatis应如何自动映射列到字段或属性NONE 表示取消自动映射;PARTIAL 只会自动映射没有定义嵌套映射的 ResultSet; FULL 会自动映射任意复杂的ResultSet(无论是否嵌套)
+
+![image-20230920100200146](image-20230920100200146.png) 
+
+#### createByConstructorSignature
+
+这里分析的是简单映射，不涉及嵌套映射的问题，在 autoMappingBehavior 默认为PARTIAL时，也是会开启自动映射的。
+最后，我们来分析场景4的具体实现(也就是 createByConstructorSignature0方法)。我们在前面介绍过，ResultSetWrapper.classNames 集合中记录了 ResultSet 中所有列对应的 Java 类型createByConstructorSignature0方法会根据该集合查找合适的构造函数，并创建结果对象。具体实现如下:
+
+![image-20230920100337030](image-20230920100337030.png) 
+
+![image-20230920100328690](image-20230920100328690.png) 
+
+#### applyAutomaticMappings
+
+在成功创建结果对象以及相应的MetaObject 对象之后,会调用shouldApplyAutomaticMappings0方法检测是否允许进行自动映射。如果允许则调用applyAutomaticMappings0方法，该方法主要负责自动映射 ResultMap 中未明确映射的列，具体实现如下:
+
+![image-20230920101117218](image-20230920101117218.png) 
+
+![image-20230920101129968](image-20230920101129968.png) 
+
+createAutomaticMappings0方法负责为未映射的列查找对应的属性，并将两者关联起来封装成UnMappedColumnAutoMapping 对象。该方法产生的 UnMappedColumnAutoMapping 对象集合会缓存在 DefaultResultSetHandler.autoMappingsCache 字段中，其中的 key 由 ResultMap 的id与列前缀构成，DefaultResultSetHandler.autoMappingsCache 字段的定义如下:
+
+![image-20230920101621284](image-20230920101621284.png) s
+
+在UnMappedColumnAutoMapping 对象中记录了未映射的列名、对应属性名称、TypeHandler对象等信息。
+DefaultResultSetHandler.createAutomaticMappings0)方法的具体实现如下:
+
+![image-20230920101648785](image-20230920101648785.png) 
+
+![image-20230920101659410](image-20230920101659410.png) 
+
+#### applyPropertyMappings
+
+​	通过applyAutomaticMappings()方法处理完自动映射之后，后续会通过applyPropertyMappings0方法处理 ResultMap 中明确需要进行映射的列，在该方法中涉及延迟加载、嵌套映射等内容，在后面会详细介绍这些内容，这里主要介绍简单映射的处理流程。applyPropertyMappings0方法的具体实现如下:
+
+![image-20230920103710915](image-20230920103710915.png) 
+
+![image-20230920103717611](image-20230920103717611.png) 
+
+![image-20230920103728650](image-20230920103728650.png) 
+
+通过上述分析可知，映射操作是在 getPropertyMappingValue0方法中完成的，下面分析该方法的具体实现，其中嵌套查询以及多结果集的处理逻辑在后面详细介绍，这里重点关注普通列值的映射:
+
+![image-20230920103845834](image-20230920103845834.png) 
+
+
+
+#### StoreObject
+
+分析到这里，已经得到了一个完整映射的结果对象，之后 DefaultResultSetHandler 会通过storeObject0方法将该结果对象保存到合适的位置，这样该行记录就算映射完成了，可以继续映射结果集中下一行记录了。
+
+如果是嵌套映射或是嵌套查询的结果对象，则保存到父对象对应的属性中:如果是普通映射(最外层映射或是非嵌套的简单映射)的结果对象，则保存到 ResultHandler 中。下面来分析 storeObject0方法的具体实现: 
+
+![image-20230920104941301](image-20230920104941301.png) 
+
+### 嵌套映射
+
+​	在实际应用中，除了使用简单的 select 语句查询单个表，还可能通过多表连接查询获取多张表的记录，这些记录在逻辑上需要映射成多个 Java 对象，而这些对象之间可能是一对一或-对多等复杂的关联关系，这就需要使用 MyBatis 提供的套映射。
+​	已经介绍了简单映射的处理流程它是 handleRowValues0方法的一条逻辑分支其另一条分支就是嵌套映射的处理流程。如果 ResultMap 中存在嵌套映射，则需要通过handleRowValuesForNestedResultMap0方法完成映射，本小节将详细分析该方法的实现原理。
+
+#### 嵌套示例
+
+为了便于读者理解，我们通过一个示例介绍嵌套映射的处理流程，示例的结果集如图所示。
+
+![image-20230921094113866](image-20230921094113866.png) 
+
+![image-20230921094225053](image-20230921094225053.png) 
+
+handleRowValuesForNestedResultMap的步骤为：
+
+* 首先，通过 skipRows0方法定位到指定的记录行，前面已经分析，这里不再重复描述。
+
+* 通过 shouldProcessMoreRows0方法检测是否能继续映射结果集中剩余的记录行，前面
+  已经分析，这里不再重复描述。
+
+* 调用resolveDiscriminatedResultMap0方法，它根据 ResultMap 中记录的 Discriminator对象以及参与映射的记录行中相应的列值，决定映射使用的 ResultMap 对象。读者可以回顾简单映射小节对resolveDiscriminatedResultMap0方法的分析，不再赘述。
+
+* 通过 createRowKey0方法为该行记录生成CacheKey,CacheKey 除了作为缓存中的 key值,在套映射中也作为 key唯一标识一个结果对象。前面分析 CacheKey 实现时提到,CacheKey是由多部分组成的,且由这多个组成部分共同确定两个CacheKey对象是否相等。createRowKey()方法的具体实现会在后面详细介绍。
+
+* 根据步骤4生成的 CacheKey 查询 DefaultResultSetHandler.nestedResultObjects 集合。DefaultResultSetHandlernestedResultObiects 字段是一个 HashMap 对象。在处理嵌套映射过程中生成的所有结果对象(包括嵌套映射生成的对象)，都会生成相应的 CacheKey 并保存到该集合中。
+
+  * 在本例中，处理结果集的第一行记录时会创建一个 Blog 对象以及相应的 CacheKey 对象，并记录到 nestedResultObjects 集合中。此时，该 Blog 对象的 posts 集合中只有个Post 对象 (id=1)，我们可以认为它是一个“部分”映射的对象，如图 所示；
+
+    ![image-20230921094837918](image-20230921094837918.png) 
+
+    
+
+  * 在处理第二行记录时，生成的 CacheKey 与 CacheKey相同，所以直接从nestedResultObjects 集合中获取相应 Blog 对象，而不是重新创建新的 Blog 对象，后面对第二行记录的映射过程本小节后面会详细分析，最终会向 Blogposts 集合中添加映射得到的 Post 对象，如图3-27 阴影部分所示。
+
+    ![image-20230921094916693](image-20230921094916693.png) 
+
+* 检测<selec>节点中 resultOrdered 属性的配置，该设置仅针对嵌套映射有效。当resultOrdered 属性为 true 时，则认为返回一个主结果行时，不会发生像上面步骤5处理第二行记录时那样引用nestedResultObjects 集合中对象 (id为1的Blog对象)的情况。这样就提前释放了nestedResultObjects 集合中的数据，避免在进行嵌套映射出现内存不足的情况
+
+  * 为了便于读者理解，我们依然通过上述示例进行分析。首先来看 resutOrdered 属性为false 时,映射完示例中四条记录后 nestedResultObjects 集合中的数据,如图![image-20230921095347870](image-20230921095347870.png) 
+
+  * 再来看当 resultOrdered 属性为 true 时，映射示例中四条记录后 nestedResultObjects 集合中的数据，如图所示。
+  * nestedResultObjects 集合中的数据在映射完一个结果集时也会进行清理，这是为映射下一个结果集做准备。所以读者需要了解，nestedResultObiects 集合中数据的生命周期受到这两方面的影响。![image-20230921095453781](image-20230921095453781.png) 
+  * 最后要注意的是，resultOrdered 属性虽然可以减小内存使用，但相应的代价就是要求用户在编写 Select 语句时需要特别注意，避免出现引用已清除的主结果对象(也就是嵌套映射的外层对象，本例中就是 id 为1的 Blog 对象)的情况，例如，分组等方式就可以避免这种情况。这就需要在应用程序的内存、SOL 语句的复杂度以及给数据库带来的压力等多方面进行权衡了。
+
+* 通过调用 getRowValue0方法的另一重载方法，完成当前记录行的映射操作并返回结果对象，其中还会将结果对象添加到 nestedResultObjects 集合中。该方法的具体实现在后面会详细介绍。
+* 通过 storeObiect0方法将生成的结果对象保存到 ResultHandler 中。
+
+#### 整体源码
+
+![image-20230921100706584](image-20230921100706584.png) 
+
+![image-20230921100730798](image-20230921100730798.png) 
+
+![image-20230921101212925](image-20230921101212925.png) 
+
+#### createRowKey
+
+createRowKey0方法主要负责生成 CacheKey，该方法构建 CacheKey 的过程如下:
+
+* 尝试使用<idArg>节点或<id>节点中定义的列名以及该列在当前记录行中对应的列值组成 CacheKey 对象。
+* 如果 ResultMap 中没有定义<idArg>节点或<id>节点，则由 ResultMap 中明确要映射的列名以及它们在当前记录行中对应的列值一起构成 CacheKey 对象。
+* 如果经过上述两个步骤后，依然查找不到相关的列名和列值，且 ResultMaptype 属性明确指明了结果对象为 Map 类型，则由结果集中所有列名以及该行记录行的所有列值一起构成CacheKey 对象。
+* 如果映射的结果对象不是 Map 类型，则由结果集中未映射的列名以及它们在当前记录行中的对应列值一起构成 CacheKey 对象。
+
+下面来看createRowKey()方法的具体实现代码:
+
+![image-20230921101704175](image-20230921101704175.png) 
+
+![image-20230921101718740](image-20230921101718740.png) 
+
+createRowKeyForMap()、createRowKeyForUnmappedProperties(和 createRowKeyForMapped.Properties0三个方法的核心逻辑都是通过 CacheKeyupdate0方法，将指定的列名以及它们在当前记录行中相应的列值添加到 CacheKey 中，使其成为构成 CacheKey 对象的一部分。这里以createRowKeyForMappedProperties 0方法为例进行分析
+
+![image-20230921102118591](image-20230921102118591.png) 
+
+![image-20230921102139332](image-20230921102139332.png) 
+
+​	在处理本节示例中结果集的第一行记录时，创建的 CacheKey对象中记录了ResultMap 的id (detailedBlogResultMap)、<idArg>节点指定的列名(blog_id)以及该记录对应的列值 (1)三个值，并由这三个值决定该 CacheKey 对象与其他 CacheKey 对象是否相等。
+
+#### getRowValue
+
+getRowValue0方法主要负责对数据集中的一行记录进行映射。在处理嵌套映射的过程中，会调用 getRowValue0方法的另一重载方法，完成对记录行的映射，其大致步骤如下:
+
+* 检测 rowValue (外层对象)是否已经存在。MyBatis 的映射规则可以嵌套多层，为了描述方便，在进行嵌套映射时，将外层映射的结果对象称为“外层对象”。在示例中，映射第二行和第三行记录(blog id 都为1)时，rowValue 指向的都是映射第一行记录时生成的 Blog 对象(id为1);在映射第四行记录(blog id 都为2)时，rowValue 为 null。
+  下面会根据外层对象是否存在，出现两条不同的处理分支。
+
+*  如果外层对象不存在，则进入如下步骤。
+
+  * 调用createResultObject0方法创建外层对象
+
+  * 通过 shouldApplyAutomaticMappings0方法检测是否开启自动映射，如果开启则调用applyAutomaticMappings0方法进行自动映射。注意 shouldApplyAutomaticMappings0方法的第二个参数为 true，表示含有嵌套映射。
+
+  * 通过applyPropertyMappings0方法处理 ResultMap 中明确需要进行映射的列。
+
+    上述三个步骤的具体实现已在“简单映射”小节介绍过了，这里不再重复。到此为止，外层对象已经构建完成，其中对应非嵌套映射的属性已经映射完成，得到的是“部分映射对象”
+
+  * 将外层对象添加到 DefaultResultSetHandler.ancestorObjects 集合 (HashMap<String.Object>类型)中，其中key 是 ResultMap 的id，value 为外层对象。
+
+  * 通过 applyNestedResultMappings0方法处理嵌套映射，其中会将生成的结果对象设置到外层对象的相应的属性中。该方法的具体实现在后面详述。
+
+  * 将外层对象从ancestorObjects 集合中移除
+
+  * 将外层对象保存到nestedResultObjects 集合中，待映射后续记录时使用。
+
+* 如果外层对象存在，则表示该外层对象已经由步骤 2 填充好了，进入如下步骤
+
+  * 将外层对象添加到ancestorObjects 集合中。
+
+  * 通过 applyNestedResultMappings0方法处理嵌套映射，其中会将生成的结果对象设置到外层对象的相应属性中。
+
+  * 将外层对象从ancestorObjects 集合中移除
+
+    
+
+下面来分析 getRowValue0方法的具体实现:
+
+![image-20230921103221747](image-20230921103221747.png) 
+
+![image-20230921103258971](image-20230921103258971.png) 
+
+![image-20230921103336157](image-20230921103336157.png) 
+
+#### applyNestedResultMappings
+
+**整体步骤**
+
+处理套映射的核心在 applyNestedResultMappings0方法之中，该方法会遍历ResultMap.propertyResultMappings 集合中记录的 ResultMapping 对象，并处理其中的嵌套映射。为了方便描述，这里将嵌套映射的结果对象称为“嵌套对象”。applyNestedResultMappings0方法的具体步骤如下:
+
+* 获取 ResultMapping.nestedResultMapId 字段值，该值不为空则表示存在相应的嵌套映射要处理。在前面的分析过程中提到，像本节示例中<collection property="posts”... 这种匿名套映射，MyBatis在初始化时也会为其生成默认的nestedResultMapId 值。
+  同时还会检测 ResultMapping.resultSet 字段，它指定了要映射的结果集名称，该属性的映射会在前面介绍的 handleResultSets0方法中完成，请读者回顾。
+* 通过resolveDiscriminatedResultMap0方法确定嵌套映射使用的 ResultMap 对象。
+* 处理循环引用的场景，下面会通过示例详细分析。如果不存在循环引用的情况，则继续后面的映射流程:如果存在循环引用，则不再创建新的嵌套对象，而是重用之前的对象。
+* 通过 createRowKey0方法为嵌套对象创建 CacheKey。该过程除了根据嵌套对象的信息创建CacheKey，还会与外层对象的 CacheKey 合并，得到全局唯一的 CacheKey 对象。
+* 如果外层对象中用于记录当前嵌套对象的属性为 Collection 类型，且未初始化，则会通过instantiateCollectionPropertyIfAppropriate(方法初始化该集合对象。
+  例如示例中映射第一行记录时，涉及<collection>节点中定义的嵌套映射，它在 Blog 中相应的属性为 posts(List<Post>类型)，所以在此处会创建 ArrayList<Post对象并赋值到 Blog.posts属性。
+* 根据<association>、<collection>等节点的 notNullColumn 属性，检测结果集中相应列是否为空。
+* 调用 getRowValue0方法完成嵌套映射，并生成嵌套对象。嵌套映射可以套多层也就可以产生多层递归。getRowValue0方法的实现前面已分析过，这里不再赘述。
+* 通过 linkObjects0方法，将步骤7中得到的套对象保存到外层对象中。示例中 Author对象会设置到 Blog.author 属性中，Post 对象会添加到 Blog.posts 集合中。
+
+**源码分析**
+
+![image-20230921104203459](image-20230921104203459.png) 
+
+![image-20230921104214369](image-20230921104214369.png) 
+
+**循环引用**
+
+​	首先来看 applyNestedResultMappings0方法是如何处理循环引用这种情况的。在进入applyNestedResultMappings0方法之前，会将外层对象保存到 ancestorObjects 集合中，在applyNestedResultMappings0方法处理套映射时，会先查找嵌套对象在ancestorObjects 集合中是否存在，如果存在就表示当前映射的嵌套对象在之前已经进行过映射，可重用之前映射产生的对象。
+​	这里通过一个简单示例介绍这种场景，假设有 TestA 和 TestB 两个类，这两个都有一个指向对方对象的字段，具体的映射规则和SOL语句定义如下:
+
+![image-20230921154657496](image-20230921154657496.png) 
+
+![image-20230921154707333](image-20230921154707333.png) 
+
+在执行 circularReferencerTest 这个查询时，大致步骤如下:
+
+* 首先会调用 getRowValue0方法按照 id 为 resultMapForA 的 ResultMap 对结果集进行映射，此时会创建 TestA 对象，并将该 TestA 对象记录到ancestorObjects 集合中。之后调用applyNestedResultMappings0方法处理resultMapForA 中的嵌套映射，即映射 TestAtestB 属性
+* 在映射 TestA.testB 属性的过程中，会调用 getRowValue0方法按照d 为resultMapForB的ResultMap 对结果集进行映射，此时会创建 TestB 对象。但是，resultMapForB 中存在嵌套映射,所以将 TestB 对象记录到ancestorObjects 集合中。之后再次调用applyNestedResultMappings(
+  方法处理嵌套映射
+* 在此次调用 applyNestedResultMappings0方法处理 resultMapForA 套映射时，发现它的 TestA 对象已存在于 ancestorObjects 集合中，MyBatis 会认为存在循环引用，不再根据resultMapForA 嵌套映射创建新的 TestA 对象，而是将ancestorObjects 集合中已存在的 TestA对象设置到TestB.testA 属性中并返回。
+
+![image-20230921154904871](image-20230921154904871.png) 
+
+![image-20230921154949888](image-20230921154949888.png) 
+
+在处理循环引用的过程中，还会调用 linkObjects0方法，该方法的主要功能是将已存在的嵌套对象设置到外层对象的相应属性中。linkObjects0方法的具体实现如下: 
+
+![image-20230921155014793](image-20230921155014793.png) 
+
+#### **combinedKey**
+
+在介绍 handleRowValuesForNestedResultMap0方法时，已经阐述了 nestedResultObjects 集合如何与CacheKey配合保存部分映射的结果对象。之前还介绍过,如果 reusltOrdered 属性为 false则在映射完一个结果集之后，nestedResultObjects 集合中的记录才会被清空，这是为了保证后续结果集的映射不会被之前结果集的数据影响。但是，如果没有 CombinedKey，则在映射属于同一结果集的两条不同记录行时，就可能因为nestedResultObjects 集合中的数据而相互影响。现在假设有图所示的结果集
+
+![image-20230921155807993](image-20230921155807993.png) 
+
+假设按照前面介绍的方式为嵌套对象创建 CacheKey，在映射第一行和第二行时，两个嵌套的TestB 对象的 CacheKey 是相同的，最终两个 TestA 对象的 testB 属性会指向同一个 TestB 对象，如图 3-33(左)所示。在多数场景下，这并不是我们想要的结果，我们希望不同的 TestA对象的 testB属性指向不同的TestB 对象，如图所示
+
+![image-20230921155947375](image-20230921155947375.png) 
+
+所以，applyNestedResultMappings0方法中为了实现这种效果，除了使用createRowKey0方法为嵌套对象创建 CacheKey，还会使用combineKeys0方法将其与外层对象的 CacheKey 合并,最终得到嵌套对象的真正CacheKey，此时可以认为该CacheKey全局唯一。combineKeys0方法的具体实现如下:
+
+![image-20230921160110322](image-20230921160110322.png) 
+
+### 嵌套查询与延迟加载
+
+“延迟加载”的含义是:暂时不用的对象不会真正载入到内存中，直到真正需要使用该对象时，才去执行数据库查询操作，将该对象加载到内存中。在 MyBatis 中，如果一个对象的某个属性需要延迟加载，那么在映射该属性时，会为该属性创建相应的代理对象并返回;当真正要使用延迟加载的属性时，会通过代理对象执行数据库加载操作，得到真正的数据。一个属性是否能够延时加载，主要看两个地方的配置:
+
+* 如果属性在<resultMap>中的相应节点明确地配置了 fetchType 属性，则按照 fetchType属性决定是否延迟加载。
+
+* 如果未配置 fetchType属性，则需要根据mybatis-configxm配置文件中的lazyLoadingEnabled 配置决定是否延时加载，具体配置如下:
+
+  ```
+  <!-- 打开延迟加载的开关 -->
+  <setting name="lazyLoadingEnabled” value="true"”/>
+  <!-- 将积极加载改为消息加载即按需加载 -->
+  <setting name="aggressiveLazyLoading"value="false"/>
+  ```
+
+​	与延时加载相关的另一个配置项是 aggressiveLazyLoading，当该配置项为 true 时，表示有延迟加载属性的对象在被调用，将完全加载其属性，否则属性将按需要加载属性。在 MyBatis3.4.1版本之后，该配置的默认值为 false，之前的版本默认值为 true。
+
+​	MyBatis中的延迟加载是通过动态代理实现的,可能第一反应就是使用前面介绍的JDK动态代理实现该功能。但是正如前面的介绍所述，要使用JDK动态代理的方式为一个对象生成代理对象，要求该目标类必须实现了 (任意)接口，而 MyBatis 映射的结果对象大多是普通的JavaBean，并没有实现任何接口，所以无法使用JDK动态代理。MyBatis 中提供了另外两种可以为普通JavaBean 动态生成代理对象的方式，分别是CGLIB 方式和JAVASSIST方式。
+
+#### 非jdk原生动态代理
+
+* **cglib**
+
+​	cglib 采用字节码技术实现动态代理功能，其原理是通过字节码技术为目标类生成一个子类并在该子类中采用方法拦截的方式拦截所有父类方法的调用，从而实现代理的功能。因为 cglib使用生成子类的方式实现动态代理，所以无法代理 final 关键字修饰的方法。cglib 与JDK 动态代理之间可以相互补充:在目标类实现接口时，使用JDK 动态代理创建代理对象，但当目标类没有实现接口时，使用cglib 实现动态代理的功能。在 Spring、MyBatis 等多种开源框架中，都可以看到JDK动态代理与 cglib 结合使用的场景
+​	下面通过一个示例简单介绍 cglib 的使用。在使用 cglib 创建动态代理类时，首先需要定义一个Callback 接口的实现，cglib 中也提供了多个 Callback 接口的子接口，如图所示。
+
+![image-20230921163137691](image-20230921163137691.png) 
+
+本例以MethodInterceptor 接口为例进行介绍，下面是 CglibProxy 类的具体代码，它实现了MethodInterceptor 接口:
+
+ ![image-20230921163233380](image-20230921163233380.png)
+
+![image-20230921163909059](image-20230921163909059.png)  
+
+**javassit**
+
+![image-20230921164303612](image-20230921164303612.png) 
+
+![image-20230921164413900](image-20230921164413900.png) 
+
+ 
+
+Javassist 也是通过创建目标类的子类方式实现动态代理功能的。这里使用 Javassist 为上面生成的JavassitTest 创建代理对象，具体实现如下: 
+
+![image-20230921164505783](image-20230921164505783.png)  
+
+![image-20230921164516347](image-20230921164516347.png) 
+
+了解上述 Javassist 的基础知识，就足够理解 MyBatis 中涉及 Javassist 的相关代码。关于Javassist 更详细的介绍，请读者查阅相关资料进行学习。
+
+#### ResultLoader
+
+MyBatis中与延迟加载相关的类有 ResultLoader、ResultLoaderMap、ProxyFactory 接口及实现类。都见到过它们的身影，本小节将详细介绍这些组件的实现原理。ResultLoader 主要负责保存一次延迟加载操作所需的全部信息，ResultLoader 中核心字段的含义如下:
+
+![image-20230921164955944](image-20230921164955944.png) 
+
+![image-20230921164942038](image-20230921164942038.png) 
+
+ResultLoader 的核心是 loadResul()方法，该方法会通过 Executor 执行 ResultLoader 中记录的SOL语句并返回相应的延迟加载对象。
+
+![image-20230921165352448](image-20230921165352448.png) 
+
+其中，selectList0方法才是完成延迟加载操作的地方，具体实现如下:
+
+![image-20230921165439048](image-20230921165439048.png) 
+
+![image-20230921165451593](image-20230921165451593.png) 
+
+延迟加载得到的是 List<Object>类型的对象，ResultExtractor.extractObjectFromList0)方法负责将其转换为 targetType类型的对象，大致逻辑如下:
+
+* 如果目标对象类型为 List，则无须转换
+
+* 如果目标对象类型是 Collection 子类、数组类型(其中项可以是基本类型，也可以是对象类型)，则创建 targetType 类型的集合对象，并复制 List<Objec>中的项
+
+* 如果目标对象是普通Java 对象且延迟加载得到的 List 大小为 1，则认为将其中唯一的项作为转换后的对象返回。
+
+  
+
+ResultExtractor的具体代码比较简单，就不再展示了。
+
+#### ResultLoaderMap
+
+ResultLoaderMap与 ResultLoader 之间的关系非常密切,在 ResultLoaderMap 中使用loadMap字段(HashMap<String,LoadPair>类型)保存对象中延迟加载属性及其对应的 ResultLoader 对象之间的关系，该字段的定义如下:
+
+```
+private final Map<String, LoadPair> loaderMap = new HashMap<String， LoadPair>();
+```
+
+ResultLoaderMap 中提供了增删 loaderMap 集合项的相关方法，代码比较简单，不再赘述
+
+loaderMap 集合中 key 是转换为大写的属性名称，value 是 LoadPair 对象，它是定义在ResultLoaderMap中的内部类，其中定义的核心字段的含义如下:
