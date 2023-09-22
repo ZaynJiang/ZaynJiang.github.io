@@ -1240,3 +1240,155 @@ private final Map<String, LoadPair> loaderMap = new HashMap<String， LoadPair>(
 ResultLoaderMap 中提供了增删 loaderMap 集合项的相关方法，代码比较简单，不再赘述
 
 loaderMap 集合中 key 是转换为大写的属性名称，value 是 LoadPair 对象，它是定义在ResultLoaderMap中的内部类，其中定义的核心字段的含义如下:
+
+![image-20230922092503134](image-20230922092503134.png) 
+
+ResultLoaderMap 中提供了 load0和 loadAll0两个执行延迟加载的入口方法，前者负责加载指定名称的属性，后者则是加载该对象中全部的延迟加载属性，具体实现如下: 
+
+![image-20230922092641724](image-20230922092641724.png) 
+
+ResultLoaderMapload0方法和 ladA110方法最终都是通过调用 LoadPair load0方法实现的LoadPair.load0方法的具体代码如下:
+
+![image-20230922092707392](image-20230922092707392.png) 
+
+![image-20230922092714983](image-20230922092714983.png) 
+
+#### ProxyFactory
+
+前面已经介绍了 cglib、Javassit 的基础知识，下面来看 MyBatis 中如何使用这两种方式创建代理对象。MyBatis 中定义了 ProxyFactory 接口以及两个实现类，如图 所示，其中CglibProxyFactory 使用 cglib 方式创建代理对象，JavassitProxyFactory 使用Javassit 方式创建代理。
+
+![image-20230922093318198](image-20230922093318198.png) 
+
+![image-20230922093335279](image-20230922093335279.png) 
+
+CglibProxyFactory.createProxy0方法通过调用 EnhancedResultObjectProxylmpl.createProxy()这个静态方法创建代理对象,而EnhancedResultObjectProxylmpl是CglibProxyFactory的内部类EnhancedResultObjectProxyImpl中的字段含义如下：
+
+![image-20230922094905204](image-20230922094905204.png)  
+
+![image-20230922094916178](image-20230922094916178.png) 
+
+​	EnhancedResultObjectProxylmpl实现了前面介绍的 MethodInterceptor 接口，其intercept0方法会根据当前调用的方法名称，决定是否触发对延迟加载的属性进行加载，具体实现如下:
+
+![image-20230922095119136](image-20230922095119136.png) 
+
+![image-20230922095128446](image-20230922095128446.png) 
+
+EnhancedResultObjectProxyImpl中的createProxy0静态方法用于创建代理对象，具体实现如下: 
+
+![image-20230922095258063](image-20230922095258063.png) 
+
+最后，来看 CglibProxyFactorycrateProxy0方法，其具体实现与前面介绍cglib 时给出的示例代码非常类似，具体实现如下所示。 
+
+![image-20230922095328890](image-20230922095328890.png) 
+
+![image-20230922095339089](image-20230922095339089.png) 
+
+​	ProxyFactory 的另一个实现 JavassistProxyFactory 与 CglibProxyFactory 基本类似JavassistProxyFactory中也定义了一个 EnhancedResultObjectProxyImpl内部类，但是该内部类继承的是MethodHandler 接口，这也是 JavassistProxyFactory 与 CglibProxyFactory 的主要区别；
+
+#### DefaultResultSetHandler
+
+​	与嵌套查询相关的第一个地方是 DefaultResultSetHandler.createParameterizedResultObject0)方法。正如前文所述，该方法会获取<resultMap>中配置的构造函数的参数类型和参数值，并选择合适的构造函数创建映射的结果对象。如果其中某个构造参数值是通过嵌套查询获取的，则需要通过 getNestedQueryConstructorValue方法创建该参数值，该方法的具体实现如下:
+
+![image-20230922095728556](image-20230922095728556.png) 
+
+![image-20230922095736903](image-20230922095736903.png) 
+
+​	通过上述的分析可知，在创建构造函数的参数时涉及的嵌套查询，无论配置如何，都不会延迟加载，在后面介绍其他属性的嵌套查询中，才会有延迟加载的处理逻辑。
+
+​	前文介绍的 DefaultResultSetHandler.applyPropertyMapping()方法会调用 getPropertyMappingValue0方法映射每个属性，简单回顾一下其实现:
+
+![image-20230922100948685](image-20230922100948685.png) 
+
+其中会调用 getNestedQueryMappingValue0方法处理套查询，如果开启了延迟加载功能则创建相应的 ResultLoader 对象并返回 DEFERED这个标识对象;如果未开启延迟加载功能则直接执行嵌套查询，并返回结果对象。getNestedQueryMappingValue0方法的具体实现如下:
+
+![image-20230922101008829](image-20230922101008829.png) 
+
+![image-20230922101024263](image-20230922101024263.png)  
+
+​	在 getPropertyMappingValue0方法中涉及 Executor 中的缓存功能，在后面介绍 BaseExecutor时还会详细介绍DeferredLoad 对象的实现原理以及一级缓存的内容。
+​	另一处涉及延迟加载的代码是 DefaultResultSetHandler.createResultObject0)方法。在对一行
+
+​	记录进行映射时，会使用 createResultObject0方法创建结果对象，其中会遍历ResultMap.propertyResultMappings 集合，如果存在嵌套查询且配置了延迟加载，则为结果对象代理对象并将该代理对象返回。createResultObject0方法中的相关代码片段如下:
+
+![image-20230922101108792](image-20230922101108792.png) 
+
+#### 小结
+
+![image-20230922101118448](image-20230922101118448.png) 
+
+ 总结了上层应用程序使用延迟加载属性时涉及的相关操作
+
+![image-20230922101127172](image-20230922101127172.png) 
+
+### 多结果集
+
+​	在前面介绍 handleResultSets0方法时，通过示例简单描述了多结果集的处理流程，在分析示例时提到:映射 author 属性时会发现，它指向了第二个结果集，而该结果集还未处理，会将其加入到nextResultMaps 集合中暂存。
+​	在示例中获取 Blog.author 属性值时，调用的是 DefaultResultSetHandler.getPropertyMappingValue0方法，其中会调用 addPendingChildRelation0方法对多结果集的情况进行处理该方法的具体步骤如下:
+
+* 调用 createKeyForMultipleResults(方法，为指定结果集创建 CacheKey 对象，该CacheKey对象由三部分构成。
+
+  * aparentMapping对象，该结果集映射得到的结果对象会设置到该parentMapping 指定的属性上。在示例中，parentMapping 就是下面的<association>节点产生的ResultMapping 对象。
+
+    ```
+    <association property="author" javaType="Author" resultSet="authors"column="author id"foreignColumn="id">
+    ```
+
+  * parentMapping.column 属性指定的列名(可能有多个列)，示例中为字符串author id”
+  * 这些列名在该记录中的值 (可能有多个值)，在示例中为 uthor id 列的值，假设其值为1。
+
+* 创建 PendingRelation 对象,PendingRelation 只有两个public字段,没有提供任何方法PendingRelation中记录了当前结果对象相应的 MetaObject 对象以及 parentMapping 对象。
+
+* 将步骤2中得到的PendingRelation对象添加到pendingRelations 集合中缓存
+
+* 在 nextResultMaps 集合中记录指定属性对应的结果集名称，示例中结果集名称是authors，以及它对应的 ResultMapping 对象。
+
+DefaultResultSetHandleraddPendingChildRelation0方法的具体实现如下:
+
+![image-20230922103007450](image-20230922103007450.png) 
+
+![image-20230922103050675](image-20230922103050675.png) 
+
+![image-20230922103316670](image-20230922103316670.png) 
+
+需要注意的是处理结果集()方法的最后一个参数父映射，也就是示例中<关联属性="作者...">节点产生的结果映射对象。
+无论是简单映射、嵌套映射、嵌套查询以及这里介绍的多结果集的处理过程，都是通过handleResultSet0方法完成映射的，与前面介绍的映射过程都是类似的。唯一不同的地方是storeObject0方法执行的逻辑，读者可以回顾简单映射小节中介绍的 storeObject0方法，当parentMapping为空时，会将映射结果对象保存到ResultHandler中,当parentMapping不为空时，则会调用linkToParents0方法，将映射的结果结果设置到外层对象的相应属性中。linkToParents0方法的具体实现如下:
+
+![image-20230922104039440](image-20230922104039440.png) 
+
+![image-20230922104046713](image-20230922104046713.png) 
+
+​	下面结合示例说明 linkToParents0方法的原理:首先创建 CacheKey 对象，所示该CacheKey 与映射 Blog.author 属性时在addPendingChildRelation0方法中创建的 CacheKey是一致的。之后查找 pendingRelations 集合中相应的PendingRelation 对象，其中记录了 Blog 对象及其author 属性对应的 ResultMapping 对象。最后调用 linkObject0方法将映射得到的Author对象设置到外层Blog对象的author 属性中。
+
+![image-20230922104141902](image-20230922104141902.png) 
+
+### 游标
+
+handleCursorResultSets0方法，该方法在数据库查询结束之后，将结果集对应的 ResultSetWrapper 对象以及映射使用的 ResultMap 对象封装成 DefaultCursor 对象并返回。
+
+![image-20230922142309963](image-20230922142309963.png) 
+
+​	MyBatis 中使用 Cursor 接口表示游标，Cursor 接口继承了Iteratable 接口。MyBatis 提供的唯一的Cursor 接口实现是 DefaultCursor，其中核心字段的含义如下所示。
+
+![image-20230922142439256](image-20230922142439256.png) 
+
+![image-20230922142447255](image-20230922142447255.png) 
+
+当用户通过SqlSession 得到 DefaultCursor 对象后，可以调用其 iterator0方法获取选代器对结果集进行迭代，在迭代过程中才会真正执行映射操作，将记录行映射成结果对象，此处使用的迭代器就是 CursorIterator 对象 (DefaultCursor.cursorlterator 字段)。CursorIterator 作为一个迭代器，其next0方法会返回一行记录映射的结果对象。
+
+其中的fetchNextUsingRowBound0方法是完成结果集映射的核心，具体实现如下:
+
+![image-20230922142715010](image-20230922142715010.png) 
+
+![image-20230922142722712](image-20230922142722712.png) 
+
+### 输出参数类型
+
+最后介绍 DefaultResultSetHandler 对存储过程中输出参数的相关处理，该处理过程是在handleOutputParameters0方法中实现的，具体实现如下:
+
+![image-20230922143503589](image-20230922143503589.png) 
+
+![image-20230922143512766](image-20230922143512766.png) 
+
+handleRefCursorOutputParameter0方法负责处理 ResultSet 类型的输出参数，它会按照指定的ResultMap 对该 ResultSet 类型的输出参数进行映射，并将映射得到的结果对象设置到用户传入的 parameterObject 对象中。handleRefCursorOutputParameter()方法具体代码如下:
+
+![image-20230922143545667](image-20230922143545667.png) 
