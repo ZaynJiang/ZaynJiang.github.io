@@ -1392,3 +1392,531 @@ handleCursorResultSets0方法，该方法在数据库查询结束之后，将结
 handleRefCursorOutputParameter0方法负责处理 ResultSet 类型的输出参数，它会按照指定的ResultMap 对该 ResultSet 类型的输出参数进行映射，并将映射得到的结果对象设置到用户传入的 parameterObject 对象中。handleRefCursorOutputParameter()方法具体代码如下:
 
 ![image-20230922143545667](image-20230922143545667.png) 
+
+## KeyGenerator
+
+默认情况下，insert 语句并不会返回自动生成的主键，而是返回插入记录的条数。如果业务逻辑需要获取插入记录时产生的自增主键，则可以使用 Mybatis 提供的 KeyGenerator 接口。不同的数据库产品对应的主键生成策略不一样，例如，Oracle DB2等数据库产品是通过sequence 实现自增id 的，在执行 insert语句之前必须明确指定主键的值;而 MySQL、Postgresql等数据库在执行 insert 语句时，可以不指定主键，在插入过程中由数据库自动生成自增主键。KeyGenerator 接口针对这些不同的数据库产品提供了对应的处理方法，KeyGenerator 接口的定义如下:
+
+![image-20230925102239669](image-20230925102239669.png) 
+
+![image-20230925102340409](image-20230925102340409.png) 
+
+NoKeyGenerator 虽然实现了 KeyGenerator 接口，但是其中的 processBefore()方法和processAfter0方法都是空实现，所以不再单独介绍。
+
+### Jdbc3KeyGenerator
+
+#### 源码分析
+
+​	Jdbc3KeyGenerator 用于取回数据库生成的自增id，它对应于 mybatis-configxml配置文件中的 useGeneratedKeys 全局配置，以及映射配置文件中 SQL 节点 (<insert>节点)的useGeneratedKeys 属性。在前面对 XMLStatementBuilder,parseStatementNode0方法的介绍中，有如下代码片段：
+
+![image-20230925102631976](image-20230925102631976.png) 
+
+​	Jdbc3KeyGenerator.processBefore()方法是空实现，只实现了 processAfter0方法，该方法会调用Jdbc3KeyGeneratorprocessBatch0方法将SQL 语句执行后生成的主键记录到用户传递的实参中。一般情况下，对于单行插入操作，传入的实参是一个 JavaBean 对象或是 Map 对象，则该对象对应一次插入操作的内容;对于多行插入，传入的实参可以是对象或 Map 对象的数组或集合，集合中每一个元素都对应一次插入操作。
+​	Jdbc3KeyGeneratorprocessAfter方法首先会调用 Jdbc3KeyGenerator.getParameters0方法将用户传入的实参转换成 Collection 类型对象，代码如下:
+
+![image-20230925104220937](image-20230925104220937.png) 
+
+![image-20230925104227563](image-20230925104227563.png) 
+
+之后，processBatch0方法会遍历数据库生成的主键结果集，并设置到 parameters 集合对应元素的属性中。
+
+![image-20230925104257214](image-20230925104257214.png) 
+
+#### 示例
+
+![image-20230925104553004](image-20230925104553004.png) 
+
+![image-20230925104625545](image-20230925104625545.png) 
+
+### SelectkeyGenerator
+
+对于不支持自动生成自增主键的数据库，例如 Oracle 数据库，用户可以利用 MyBatis 提供的 SelectkeyGenerator 来生成主键，SelectkeyGenerator 也可以实现类似于 Jdbc3KeyGenerator 提供的、获取数据库自动生成的主键的功能。
+
+#### 源码分析
+
+在前面分析<selectKey>节点的解析过程中，我们曾经见到过 SelectkeyGenerator 的身影。SelectkeyGenerator主要用于生成主键，它会执行映射配置文件中定义的<selectKey>节点的SQL语句，该语句会获取insert 语句所需要的主键。
+
+SelectKevGenerator 中定义的字段的含义如下:
+
+![image-20230925105547581](image-20230925105547581.png) 
+
+SelectkeyGenerator 中的 processBefore0方法和 processAfter0方法的实现都是调用processGeneratedKeys0方法，两者的具体实现如下:
+
+![image-20230925105610218](image-20230925105610218.png) 
+
+processGeneratedKeys0方法会执行<selectKey>节点中配置的 SQL 语，获取insert 语句中用到的主键并映射成对象，然后按照配置，将主键对象中对应的属性设置到用户参数中。
+processGeneratedKeys0方法的具体实现如下:
+
+![image-20230925105712734](image-20230925105712734.png) 
+
+![image-20230925105722189](image-20230925105722189.png) 
+
+#### 示例
+
+![image-20230925105904954](image-20230925105904954.png) 
+
+![image-20230925105921296](image-20230925105921296.png) 
+
+## StatementHandler
+
+​	StatementHandler 接口是MyBatis 的核心接口之一，它完成了MyBatis 中最核心的工作，也是后面要介绍的Executor 接口实现的基础。
+​	StatementHandler 接口中的功能很多，例如创建Statement 对象，为SOL语句绑定实参，执行 select、insert、update、delete 等多种类型的 SOL语句，批量执行 SOL 语句，将结果集映射成结果对象。
+​	StatementHandler 接口的定义如下:
+
+![image-20230925111443135](image-20230925111443135.png) 
+
+![image-20230925111451048](image-20230925111451048.png) 
+
+![image-20230925111547673](image-20230925111547673.png)  
+
+### RoutingStatementHandler
+
+​	对于 RoutingStatementHandler 在整个 StatementHandler 接口层次中的扮演角色，有人觉得它是一个装饰器，但它并没有提供功能上的扩展;有人觉得这里使用了策略模式;还有人认为它是一个静态代理类。笔者个人倾向于策略模式的观点，后面还会详细介绍策略模式的相关知识。
+​	RoutingStatementHandler 会根据 MappedStatement 中指定的 statementType 字段，创建对应的StatementHandler 接口实现。RoutingStatementHandler 类的具体实现代码如下:
+
+![image-20230925112008107](image-20230925112008107.png) 
+
+### BaseStatementHandler
+
+BaseStatementHandler 是一个实现了StatementHandler 接口的抽象类，它只提供了一些参数绑定相关的方法并没有实现操作数据库的方法BaseStatementHandler 中核心字段的含义如下：
+
+![image-20230925112101236](image-20230925112101236.png) 
+
+![image-20230925112110265](image-20230925112110265.png) 
+
+在 BaseStatementHandler 的构造方法中，除了初始化上述字段之外，还会调用KeyGeneratorprocessBefore0方法初始化SOL语句的主键，具体实现如下:
+
+![image-20230925112320429](image-20230925112320429.png) 
+
+​	BaseStatementHandler 实现了 StatementHandler 接口中的 prepare()方法，该方法首先调用instantiateStatement0抽象方法初始化 java.sql.Statement 对象，然后为其配置超时时间以及fetchSize 等设置，代码比较简单，不再贴出来了。
+​	BaseStatementHandler 依赖两个重要的组件，它们分别是 ParameterHandler 和ResultSetHandler。其中 ResultSetHandler 接口以及相关实现已经在前面分析过了，不再重复。下面着重分析 ParameterHandler 接口。
+
+### ParameterHandler 
+
+​	通过前面对动态SQL的介绍可知，在 BoundSql中记录的SOL语句中可能包含“?”占位符，而每个“?”占位符都对应了 BoundSqlparameterMappings 集合中的一个元素，在该ParameterMapping对象中记录了对应的参数名称以及该参数的相关属性
+​	在 ParameterHandler 接口中只定义了一个 setParameters0方法，该方法主要负责调用
+
+​	PreparedStatementset*0方法为SOL语句绑定实参。MyBatis 只为 ParameterHandler 接口提供了唯一一个实现类，也就是本小节主要介绍的 DefaultParameterHandler。DefaultParameterHandler中核心字段的含义如下:
+
+![image-20230925113208041](image-20230925113208041.png) 
+
+​	在DefaultParameterHandler.setParameters(方法中会遍历 BoundSqlparameterMappings 集合中记录的 ParameterMapping 对象，并根据其中记录的参数名称查找相应实参，然后与SQL语句绑定。setParameters0方法的具体代码如下:
+
+![image-20230925113303886](image-20230925113303886.png) 
+
+![image-20230925113314542](image-20230925113314542.png) 
+
+为SQL语句绑定完实参之后，就可以调用 Statement 对象相应的execute0方法，将SQL语句交给数据库执行了，该步骤在下一节介绍 BaseStatementHandler 子类的具体实现时会详细介绍。
+
+### SimpleStatementHandler
+
+​	SimpleStatementHandler 继承了 BaseStatementHandler 抽象类。它底层使用 javasqlStatement对象来完成数据库的相关操作，所以 SOL 语句中不能存在占位符，相应的，SimpleStatementHandler.parameterize0)方法是空实现。
+​	SimpleStatementHandler.instantiateStatement)方法直接通过JDBC Connection 创建 Statement对象，具体实现如下:
+
+![image-20230925113736483](image-20230925113736483.png) 
+
+![image-20230925113755702](image-20230925113755702.png) 
+
+上面创建的 Statement 对象之后会被用于完成数据库操作，SimpleStatementHandler.query0方法等完成了数据库查询的操作，并通过 ResultSetHandler 将结果集映射成结果对象。 
+
+![image-20230925113832828](image-20230925113832828.png) 
+
+​	SimpleStatementHandler 中的queryCursor0、batch0方法与query0方法实现类似，也是直接调用Statement对象的相应方法，不再赘述。
+​	SimpleStatementHandlerupdate0方法负责执行 insert、update 或 delete 等类型的 SOL 语句,并且会根据配置的KeyGenerator 获取数据库生成的主键，具体实现如下:
+
+![image-20230925135601799](image-20230925135601799.png) 
+
+![image-20230925135610236](image-20230925135610236.png) 
+
+### PreparedStatementHandler
+
+​	PreparedStatementHandler底层依赖于java.sql.PreparedStatement对象来完成数据库的相关操作。在 SimpleStatementHandler,parameterize0方法中，会调用前面介绍的 ParameterHandler.setParameters0方法完成SOL语句的参数绑定，代码比较简单，不再贴出来了。
+​	PreparedStatementHandlerinstantiateStatement))方法直接调用DBC Connection 的prepareStatement0方法创建 PreparedStatement 对象，具体实现如下;
+
+![image-20230925140110401](image-20230925140110401.png) 
+
+PreparedStatementHandler 中其他方法的实现与 SimpleStatementHandler 对应方法的实现类似；
+
+​	CallableStatementHandler 底层依赖于 javasql.CallableStatement 调用指定的存储过程，其parameterize0方法也会调用ParameterHandlersetParameters0方法完成SOL语句的参数绑定，并指定输出参数的索引位置和JDBC类型。其余方法与前面介绍的 ResultSetHandler 实现类似，唯一区别是会调用前面介绍的 ResultSetHandler.handleOutputParameters0处理输出参数，这里不再赘述了，感兴趣的读者可以参考源码进行学习。
+
+## Executor
+
+​	Executor 是 MyBatis 的核心接口之一，其中定义了数据库操作的基本方法。在实际应用中经常涉及的SqlSession接口的功能，都是基于 Executor 接口实现的。Executor 接口中定义的方法如下:
+
+![image-20230926161109953](image-20230926161109953.png) 
+
+![image-20230926162219406](image-20230926162219406.png) 
+
+MyBatis提供的 Executor 接口实现如图所示，在这些Executor 接口实现中涉及两种设计模式，分别是模板方法模式和装饰器模式。装饰器模式在前面已经介绍过了，很明显，这里的CachingExecutor 扮演了装饰器的角色为 Executor 添加了二级缓存的功能，二级缓存的实现原理在后面介绍CacheExecutor 时详细分析。在开始介绍 Executor 接口的实现之前，先来介绍模板方法模式的相关知识。
+
+### 模板方法模式
+
+​	在程序开发中，经常会遇到这种情况:某个方法要实现的算法需要多个步骤，但其中有一些步骤是固定不变的，而另一些步骤则是不固定的。为了提高代码的可扩展性和可维护性，模板方法模式在这种场景下就派上了用场。
+​	在模板方法模式中，一个算法可以分为多个步骤，这些步骤的执行次序在一个被称为“模板方法”的方法中定义，而算法的每个步骤都对应着一个方法，这些方法被称为“基本方法”模板方法按照它定义的顺序依次调用多个基本方法，从而实现整个算法流程。在模板方法模式中，会将模板方法的实现以及那些固定不变的基本方法的实现放在父类中，而那些不固定的基本方法在父类中只是抽象方法，其真正的实现代码会被延迟到子类中完成。
+​	下面来看模板方法模式的结构，如图所示其中template0方法是模板方法,operation30是固定不变的基本方法，而operationl、operation2、operation4 都是不固定的基本方法，所以在AbstractClass中都定义为抽象方法，而ConcreteClass1和ConcreteClass2这两个子类需要实现这些方法。
+
+![image-20230926163314851](image-20230926163314851.png) 
+
+​	通过上面的描述可知，模板方法模式可以将模板方法以及固定不变的基本方法统一封装到父类中，而将变化的部分封装到子类中实现，这样就由父类控制整个算法的流程，而子类实现算法的某些细节，实现了这两方面的解耦。当需要修改算法的行为时，开发人员可以通过添加子类的方式实现，这符合“开放-封闭”原则。
+​	模板方法模式不仅可以复用已有的代码，还可以充分利用了面向对象的多态性，系统可以在运行时选择一种具体子类实现完整的算法，这就提高系统的灵活性和可扩展性。
+​	模板方法模式与其他设计模式一样，都会增加系统的抽象程度。另外，模板方法模式在修改算法实现细节时，会增加类的个数，也会增加系统的复杂性。
+
+### BaseExecutor
+
+​	BaseExecutor是一个实现了Executor接口的抽象类,它实现了Executor接口的大部分方法其中就使用了模板方法模式。BaseExecutor 中主要提供了缓存管理和事务管理的基本功能，继承BaseExecutor的子类只要实现四个基本方法来完成数据库的相关操作即可，这四个方法分别是:doUpdate0方法、doQuery0方法、doQueryCursor0方法、doFlushStatement0方法，其余的功能在BaseExecutor 中实现。
+​	BaseExecutor 中各个字段的含义如下:
+
+![image-20230926163954691](image-20230926163954691.png) 
+
+#### 一级缓存简介
+
+​	在常见的应用系统中，数据库是比较珍贵的资源，很容易成为整个系统的瓶颈。在设计和维护系统时，会进行多方面的权衡，并且利用多种优化手段，减少对数据库的直接访问。使用缓存是一种比较有效的优化手段，使用缓存可以减少应用系统与数据库的网络交互、减少数据库访问次数、降低数据库的负担、降低重复创建和销毁对象等一系列开销，从而提高整个系统的性能。从另一方面来看，当数据库意外宕机时，缓存中保存的数据可以继续支持应用程序中的部分展示的功能，提高系统的可用性。
+​	MyBatis 作为一个功能强大的ORM框架，也提供了缓存的功能，其缓存设计为两层结构分别为一级缓存和二级缓存。二级缓存在后面介绍CachingExecutor 时会详细介绍，本小节主要介绍一级缓存的相关内容
+级缓存是会话级别的缓存，在MyBatis 中每创建一个 SqlSession 对象，就表示开启一次数据库会话。在一次会话中，应用程序可能会在短时间内，例如一个事务内，反复执行完全相同的查询语句，如果不对数据进行缓存，那么每一次查询都会执行一次数据库查询操作，而多次完全相同的、时间间隔较短的查询语句得到的结果集极有可能完全相同，这也就造成了数据库资源的浪费。
+
+​	MyBatis 中的 SqlSession 是通过本节介绍的 Executor 对象完成数据库操作的，为了避免上述问题，在 Executor 对象中会建立一个简单的缓存，也就是本小节所要介绍的“一级缓存”，它会将每次查询的结果对象缓存起来。在执行查询操作时，会先查询一级缓存，如果其中存在完全一样的查询语句，则直接从一级缓存中取出相应的结果对象并返回给用户，这样不需要再访问数据库了，从而减小了数据库的压力。
+​	一级缓存的生命周期与 SqlSession 相同，其实也就与 SqlSession 中封装的 Executor 对象的生命周期相同。当调用 Executor 对象的 close0方法时，该 Executor 对象对应的一级缓存就变得不可用。一级缓存中对象的存活时间受很多方面的影响,例如在调用 Executor.update0方法时也会先清空一级缓存。其他影响一级缓存中数据的行为，我们在分析 BaseExecutor 的具体实现时会详细介绍。一级缓存默认是开启的，一般情况下，不需要用户进行特殊配置。如果存在特殊需求，读者可以考虑使用插件功能来改变其行为。
+
+#### 一级缓存管理
+
+执行 select语句查询数据库是最常用的功能,BaseExecutor.query0方法实现该功能的思路还是比较清晰的，如图所示。
+
+![image-20230926165201983](image-20230926165201983.png) 
+
+BaseExecutor.query0方法会首先创建 CacheKey 对象，并根据该 CacheKey 对象查找一级缓存，如果缓存命中则返回缓存中记录的结果对象，如果缓存未命中则查询数据库得到结果集，之后将结果集映射成结果对象并保存到一级缓存中，同时返回结果对象。query0方法的具体实现如下:
+
+![image-20230926165648315](image-20230926165648315.png) 
+
+CacheKey对象在前面介绍缓存模块时已经分析过了，这里主要关注BaseExecutor.createCacheKey0方法创建的 CacheKey 对象由哪几部分构成，createCacheKey0方法具体实现如下:
+
+![image-20230926165716122](image-20230926165716122.png) 
+
+![image-20230926165803885](image-20230926165803885.png) 
+
+​	可以清晰地看到，该 CacheKey 对象由 MappedStatement 的 id、对应的 offset 和 limit、SQL语句(包含“?”占位符)用户传递的实参以及Environment的id 这五部分构成。
+​	继续来看上述代码中调用的 query0方法的另一重载的具体实现，该重载会根据前面创建的CacheKey 对象查询一级缓存,如果缓存命中则将缓存中记录的结果对象返回，如果缓存未命中则调用 doQuery0方法完成数据库的查询操作并得到结果对象，之后将结果对象记录到一级缓存中。具体实现如下:
+
+![image-20230926191047149](image-20230926191047149.png) 
+
+![image-20230926191055458](image-20230926191055458.png) 
+
+上面介绍了 BaseExecutor 中缓存的第一种功能，也就是缓存结查询得到的结果对象。除此之外，一级缓存还有第二个功能:前面在分析嵌套查询时，如果一级缓存中缓存了嵌套查询的结果对象，则可以从一级缓存中直接加载该结果对象:如果一级缓存中记录的嵌套查询的结果对象并未完全加载，则可以通过 DeferredLoad 实现类似延迟加载的功能。
+Executor 中与上述功能直接相关的方法有两个，一个是sCached0方法负责检测是否缓存了指定查询的结果对象，具体实现如下:
+
+![image-20230926191131507](image-20230926191131507.png)
+
+另一个是 deferLoad0方法,它负责创建 DeferredLoad 对象并将其添加到 deferredLoads 集合中，具体实现如下: 
+
+![image-20230926191201938](image-20230926191201938.png) 
+
+![image-20230926191210431](image-20230926191210431.png) 
+
+ DeferredLoad 是定义在 BaseExecutor 中的内部类，它负责从 localCache 缓存中延迟加载结果对象，其字段的含义如下:
+
+![image-20230926191346442](image-20230926191346442.png) 
+
+DeferredLoadcanLoad0方法负责检测缓存项是否已经完全加载到了缓存中。首先要说明“完全加载”的含义: BaseExecutor.queryFromDatabase0方法中，开始查询调用 doQuery0方法查询数据库之前，会先在 localCache 中添加占位符，待查询完成之后，才将真正的结果对象放到localCache 中缓存，此时该缓存项才算“完全加载”。BaseExecutor.queryFromDatabase0方法的实现大致如下: 
+
+![image-20230926191426707](image-20230926191426707.png) 
+
+![image-20230926191433378](image-20230926191433378.png) 
+
+![image-20230926191447658](image-20230926191447658.png) 
+
+DeferredLoad.load0方法负责从缓存中加载结果对象，并设置到外层对象的相应属性中，具体实现如下: 
+
+![image-20230926191508856](image-20230926191508856.png) 
+
+介绍完 DeferredLoad 对象之后,来看触发 DeferredLoad 从缓存中加载结果对象的相关代码这段代码在 BaseExecutor.query0方法中，如下所示。 
+
+![image-20230926191534864](image-20230926191534864.png) 
+
+![image-20230926191604399](image-20230926191604399.png) 
+
+​	BaseExecutor.queryCursor0方法的主要功能也是查询数据库，这一点与query0方法类似，但它不会直接将结果集映射为结果对象,而是将结果集封装成Cursor 对并返回,待用户遍历 Cursor时才真正完成结果集的映射操作。另外，queryCursor 0方法是直接调用doQueryCursor0这个基本方法实现的，并不会像query0方法那样使用查询一级缓存。queryCursor 0方法的代码比较简单，感兴趣的读者可以参考源码。
+​	介绍完缓存的填充过程和使用，再来看缓存的清除功能，该功能是在 clearLocalCache0方法中完成的，在很多地方都可以看到它的身影，其调用栈如图 3-46 所示。
+
+![image-20230926191717379](image-20230926191717379.png) 
+
+​	前面已经介绍过，BaseExecutor.query0方法会根据 flushCache 属性和localCacheScope 配置决定是否清空一级缓存，这里不再重复描述。
+​	BaseExecutor.update)方法负责执行insert、updatedelete三类SOL语句,它是调用doUpdate()模板方法实现的。在调用 doUpdate(方法之前会清空缓存，因为执行 SQL语句之后，数据库中的数据已经更新，一级缓存的内容与数据库中的数据可能已经不一致了，所以需要调用clearLocalCache0方法清空一级缓存中的“脏数据”。
+
+![image-20230926191814972](image-20230926191814972.png) 
+
+![image-20230926191822251](image-20230926191822251.png) 
+
+#### 事务处理
+
+​	在BatchExecutor 实现(具体实现后面详细介绍)中，可以缓存多条 SOL语，等待合适的时机将缓存的多条SOL语句一并发送到数据库执行。Executor.flushStatements0方法主要是针对批处理多条SOL语句的，它会调用 doFlushStatements0)这个基本方法处理 Executor 中缓存的多条SOL 语句。在 BaseExecutor.commit0、rollback0等方法中都会首先调用 flushStatements(方法，然后再执行相关事务操作，其调用栈如图所示。
+
+![image-20230926192222971](image-20230926192222971.png) 
+
+BaseExecutor. flushStatements（）方法的具体实现如下：
+
+![image-20230926192200640](image-20230926192200640.png) 
+
+
+
+BaseExecutorcommit0方法首先会清空一级缓存、调用 flushStatements0方法，最后才根据参数决定是否真正提交事务。commit0方法的实现如下:
+
+![image-20230926192115480](image-20230926192115480.png) 
+
+![image-20230926192122167](image-20230926192122167.png) 
+
+​	BaseExecutorrollback0方法的实现与 commit0实现类似，同样会根据参数决定是否真正回滚事务，区别是其中调用的是 flushStatements0方法的 isRollBack 参数为 true，这就会导致Executor 中缓存的SOL语句全部被忽略(不会被发送到数据库执行)，感兴趣的读者请参考源码。
+​	BaseExecutor.close0方法首先会调用 rollback0方法忽略缓存的SOL语，之后根据参数决定是否关闭底层的数据库连接。代码比较简单，感兴趣的读者请参考源码。
+
+### SimpleExecutor
+
+​	SimpleExecutor 继承了 BaseExecutor 抽象类，它是最简单的 Executor 接口实现。正如前面所说,Executor使用了模板方法模式,一级缓存等固定不变的操作都封装到了 BaseExecutor中在SimpleExecutor中就不必再关心一级缓存等操作,只需要专注实现4个基本方法的实现即可
+
+​	首先来看SimpleExecutordoQuery0方法的具体实现:
+
+![image-20230927094501607](image-20230927094501607.png) 
+
+![image-20230927094919663](image-20230927094919663.png) 
+
+### ReuseExecutor
+
+​	在传统的JDBC编程中，重用 Statement 对象是常用的一种优化手段，该优化手段可以减少SQL预编译的开销以及创建和销毁 Statement 对象的开销，从而提高性能。
+​	ReuseExecutor 提供了 Statement 重用的功能，ReuseExecutor 中通过 statementMap 字段(HashMap<String,Statement类型)缓存使用过的 Statement 对象，key 是 SQL语句，value 是SOL对应的Statement 对象。
+​	ReuseExecutor.doQuery0、doQueryCursor0、doUpdate0方法的实现与 SimpleExecutor 中对应方法的实现一样，区别在于其中调用的 prepareStatement0方法，SimpleExecutor 每次都会通过JDBC Connection创建新的Statement 对象，而ReuseExecutor 则会先尝试重用 StatementMap 中缓存的Statement 对象。
+ReuseExecutor.prepareStatement0方法的具体实现如下:
+
+![image-20230927095151834](image-20230927095151834.png) 
+
+![image-20230927095355779](image-20230927095355779.png) 
+
+当事务提交或回滚、连接关闭时，都需要关闭这些缓存的Statement 对象。前面介绍BaseExecutor.commit0、rollback0和 close0方法时提到,其中都会调用 doFlushStatements0方法,所以在该方法中实现关闭Statement对象的逻辑非常合适，具体实现如下:
+
+![image-20230927095820483](image-20230927095820483.png) 
+
+这里需要注意一下 ReuseExecutor.queryCursor0方法的使用，熟悉JDBC编程的读者知道每个Statement对象只能对应一个结果集当多次调用queryCursor0方法执行同一SQL语句时会复用同一个Statement 对象，只有最后一个ResultSet 是可用的。而queryCursor0方法返回的是Cursor 对象，在用户迭代 Cursor 对象时，才会真正遍历结果集对象并进行映射操作，这就可能导致使用前面创建的Cursor 对象中封装的结果集关闭。示例如下:
+
+![image-20230927100153195](image-20230927100153195.png) 
+
+​	还有一个问题是，在前面介绍 DefaultCursor.CursorIterator 时提到过，当完成结果集的处理时，fetchNextObjectFromDatabase0方法会调用 DefaultCursor.close0)方法将其中封装的结果集关闭，并且同时会关闭结果集对应的 Statement 对象，这就导致缓存的 Statement 对象关闭，在后续继续使用该Statement对象时就会抛出NullPointException。
+​	反观ReuseExecutor.query0方法,在 select 语句执行之后,会立即将结果集映射成结果对象,然后关闭结果集，但是不会关闭相关的 Statement 对象，所以使用 ReuseExecutor.query0方法并不涉及上述问题；
+
+### BatchExecutor 
+
+​	应用系统在执行一条SQL 语句时，会将 SQL 语以及相关参数通过网络发送到数据库系统。对于频繁操作数据库的应用系统来说，如果执行一条 SQL 语句就向数据库发送一次请求,很多时间会浪费在网络通信上。使用批量处理的优化方式可以在客户端缓存多条SOL 语句，并在合适的时机将多条SOL 语句打包发送给数据库执行，从而减少网络方面的开销，提升系统的性能。
+​	不过有一点需要注意，在批量执行多条 SOL 语句时，每次向数据库发送的 SOL 语句条数是有上限的，如果超过这个上限，数据库会拒绝执行这些 SOL 语句并抛出异常。所以批量发送SOL语句的时机很重要
+​	BatchExecutor 实现了批处理多条SOL语的功能，其中核心字段的含义如下:
+
+![image-20230927101413480](image-20230927101413480.png) 
+
+​	JDBC中的批处理只支持 insert、update、delete 等类型的 SOL 语，不支持 select 类型的SQL语句，所以下面要分析的是 BatchExecutor.doUpdate0方法。
+BatchExecutor.doUpdate0方法在添加一条SQL语句时,首先会将currentSql字段记录的SQL语句以及 currentStatement 字段记录的 MappedStatement 对象与当前添加的 SQL以及MappedStatement对象进行比较，如果相同则添加到同一个 Statement 对象中等待执行，如果不同则创建新的 Statement 对象并将其缓存到statementList 集合中等待执行。doUpdate0方法的具体实现如下:
+
+![image-20230927101539674](image-20230927101539674.png) 
+
+​	熟悉JDBC批处理功能的读者知道，Statement 中可以添加不同模式的SQL，但是每添加个新模式的 SOL语句都会触发一次编译操作。PreparedStatement 中只能添加同一模式的SQL语句，只会触发一次编译操作，但是可以通过绑定多组不同的实参实现批处理。通过上面对doUpdate0方法的分析可知，BatchExecutor 会将连续添加的、相同模式的 SOL语句添加到同个Statement/PreparedStatement 对象中，如图所示，这样可以有效地减少编译操作的次数
+
+![image-20230927105854390](image-20230927105854390.png) 
+
+在添加完待执行的SOL语句之后，来看一下 BatchExecutor.doFlushStatements0方法是如何批量处理这些 SOL语句的: 
+
+![image-20230927110005434](image-20230927110005434.png) 
+
+![image-20230927110014731](image-20230927110014731.png) 
+
+​	BatchExecutor 中doQuery0和 doQueryCursor方法的实现与前面介绍的 SimpleExecutor 类似，主要区别就是 BatchExecutor 中的这两个方法在最开始都会先调用 flushStatements0方法，执行缓存的 SOL 语句，这样才能从数据库中查询到最新的数据，具体代码就不再展示了。
+
+### CachingExecutor
+
+CachingExecutor是一个 Executor 接口的装饰器，它为 Executor对象增加了二级缓存的相关功能。在开始介绍CachingExecutor 的具体实现之前，先来简单介绍一下MyBatis 中的二级缓存及其依赖的相关组件。
+
+#### 二级缓存简介
+
+MyBatis 中提供的二级缓存是应用级别的缓存,它的生命周期与应用程序的生命周期相同。与二级缓存相关的配置有三个，如下所示。
+
+* 首先是 mybatis-configxml配置文件中的caheEnabled 配置它是二级缓存的总开关只有当该配置设置为 true 时，后面两项的配置才会有效果，cacheEnabled 的默认值为 true。具体配置如下:
+
+  ![image-20230927110502065](image-20230927110502065.png) 
+
+* 在前面介绍映射配置文件的解析流程时提到，映射配置文件中可以配置<cache>节点或<cached-ref节点。
+
+  如果映射配置文件中配置了这两者中的任一一个节点，则表示开启了二级缓存功能。如果配置了<cache>节点，在解析时会为该映射配置文件指定的命名空间创建相应的 Cache 对象作为其二级缓存，默认是 PerpetualCache 对象，用户可以通过<cache>节点的 type 属性指定自定义Cache 对象。
+  如果配置了<cache-ref节点，在解析时则不会为当前映射配置文件指定的命名空间创建独立的Cache 对象，而是认为它与<cache-re节点的 namespace 属性指定的命名空间共享同一个Cache 对象。
+  通过<cache>节点和<cache-ref节点的配置，用户可以在命名空间的粒度上管理二级缓存的开启和关闭。
+
+* 最后一个配置项是<select节点中的 useCache 属性，该属性表示查询操作产生的结果对象是否要保存到二级缓存中。useCache属性的默认值是true。
+  为了读者更好地理解MyBatis的两层缓存结构，下面给出这张示意图。这里以图中的SqlSession2为例，简单说明二级缓存的使用过程
+  当应用程序通过SqlSession2 执行定义在命名空间namespace2中的查询操作时,SqSession2首先到 namespace2 对应的二级缓存中查找是否缓存了相应的结果对象。如果没有，则继续到SqlSession2 对应的一级缓存中查找是否缓存了相应的结果对象，如果依然没有，则访问数据库获取结果集并映射成结果对象返回。最后，该结果对象会记录到 SglSession 对应的一级缓存以及namespace2 对应的二级缓存中，等待后续使用。另外需要注意的是，图3-49 中的命名空间namespace2和 namespace3共享了同一个二级缓存对象，所以通过 SqlSession3 执行命名空间namespace3中的完全相同的查询操作 (只要该查询生成的CacheKey 对象与上述SglSession2中的查询生成 CacheKey 对象相同即可)时，可以直接从二级缓存中得到相应的结果对象
+
+  ![image-20230927110718253](image-20230927110718253.png) 
+
+#### TransactionalCache
+
+#### TransactionalCacheManager
+
+TransactionalCache和TransactionalCacheManager是 CachingExecutor 依赖的两个组件。其中TransactionalCache 继承了 Cache 接口，主要用于保存在某个 SqlSession 的某个事务中需要向某个二级缓存中添加的缓存数据。TransactionalCache中核心字段的含义如下:
+
+![image-20230927134239892](image-20230927134239892.png) 
+
+TransactionalCache.putObject0方法并没有直接将结果对象记录到其封装的二级缓存中，而是暂时保存在 entriesToAddOnCommit 集合中，在事务提交时才会将这些结果对象从entriesToAddOnCommit 集合添加到二级缓存中。putObject0方法的具体实现如下:
+
+![image-20230927141824918](image-20230927141824918.png) 
+
+再来看 TransactionalCache.getObject0方法，它首先会查询底层的二级缓存，并将未命中的key 记录到entriesMissedInCache 中，之后会根据 learOnCommit字段的值决定具体的返回值具体实现如下: 
+
+![image-20230927141844177](image-20230927141844177.png) 
+
+​	TransactionalCache.clear)方法会清空 entriesToAddOnCommit 集合，并设置 clearOnCommit为true，具体代码不再贴出来了
+
+​	TransactionalCachecommit0)方法会根据 clearOnCommit 字段的值决定是否清空二级缓存然后调用flushPendingEntries0方法	将entriesToAddOnCommit集合中记录的结果对象保存到二级缓存中，具体实现如下:
+
+![image-20230927141916703](image-20230927141916703.png) 
+
+![image-20230927141925587](image-20230927141925587.png) 
+
+TransactionalCache.rollback0方法会将 entriesMissedInCache 集合中记录的缓存项从二级缓存中删除，并清空entriesToAddOnCommit 集合和entriesMissedInCache 集合
+
+![image-20230927143153233](image-20230927143153233.png) 
+
+TransactionalCacheManager 用于管理 CachingExecutor 使用的二级缓存对象，其中只定义了一个transactionalCaches 字段(HashMap<Cache,TransactionalCache>类型)，它的 key 是对应的CachingExecutor 使用的二级缓存对象，value 是相应的 TransactionalCache 对象，在该TransactionalCache中封装了对应的二级缓存对象，也就是这里的key。
+
+TransactionalCacheManager的实现比较简单，下面简单介绍各个方法的功能和实现：
+
+* clear0)方法、putObject0方法、getObject0方法:调用指定二级缓存对应的TransactionalCache 对象的对应方法，如果 transactionalCaches 集合中没有对应TransactionalCache对象，则通过 getTransactionalCache0方法创建
+
+  ![image-20230927143307489](image-20230927143307489.png) 
+
+* commit()方法、rollback()方法:遍历 transactionalCaches 集合，并调用其中各个TransactionalCache对象的相应方法。
+
+#### CachingExecutor实现
+
+![image-20230927143433533](image-20230927143433533.png) 
+
+​	通过可以清晰地看到,CachingExecutor中封装了一个用执行数据库操作的 Executor对象，以及一个用于管理缓存的TransactionalCacheManager 对象。
+
+CachingExecutorquery0方法执行查询操作的步骤如下:
+
+* 获取 BoundSql对象，创建查询语句对应的 CacheKey 对象。
+* 检测是否开启了二级缓存，如果没有开启二级缓存，则直接调用底层 Executor 对象的query0方法查询数据库。如果开启了二级缓存，则继续后面的步骤。
+* 检测查询操作是否包含输出类型的参数，如果是这种情况，则报错。
+* 调用TransactionalCacheManager.getObjec()方法查询二级缓存，如果二级缓存中查找到相应的结果对象，则直接将该结果对象返回。
+* 如果二级缓存没有相应的结果对象，则调用底层 Executor 对象的 query0方法，正如前面介绍的，它会先查询一级缓存，一级缓存未命中时，才会查询数据库。最后还会将得到的结果对象放入TransactionalCache.entriesToAddOnCommit 集合中保存。
+
+CachingExecutor.quer()方法的具体代码如下：
+
+![image-20230927143851793](image-20230927143851793.png) 
+
+![image-20230927144226601](image-20230927144226601.png) 
+
+通过上面的分析，CachingExecutor、TransactionalCacheManager、TransactionalCache 以及二级缓存之间的关系如图所示；
+
+![image-20230927144321991](image-20230927144321991.png) 
+
+​	不同的CachingExecutor 对象由不同的线程操作，那么二级缓存会不会出现线程安全的问题呢?请读者回顾一下 CacheBuilder.build0方法，其中会调用CacheBuilder.setStandardDecorators0方法为 PerpetualCache 类型的 Cache 对象添加装饰器,在这个过程中就会添加SynchronizedCache这个装饰器，从而保证二级缓存的线程安全。
+​	再来看CachingExecutorcommit0和 rollback0方法的实现，它们首先调用底层 Executor 对象的对应方法完成事务的提交和回滚，然后调用 TransactionalCacheManager 的对应方法完成对二级缓存的相应操作。具体代码如下:
+
+![image-20230927144723407](image-20230927144723407.png) 
+
+![image-20230927144733801](image-20230927144733801.png) 
+
+​	看到这里，读者可能会提出这样的疑问:为什么要在事务提交时才将 TransactionalCacheentriesToAddOnCommit 集合中缓存的数据写入到二级缓存，而不是像一级缓存那样，将每次查询结果都直接写入二级缓存?笔者认为，这是为了防止出现“脏读”的情况，最终实现的效果有点类似于“不可重复读”的事务隔离级别。假设当前数据库的隔离级别是“不可重复读”，先后开启 T1、T2两个事务，如图3-52 所示，在事务T1中添加了记录A，之后查询A 记录，最后提交事务，事务 T2会查询记录 A。如果事务 T查询记录 A 时，就将A 对应的结果对象放入二级缓存,则在事务T2第一次查询记录A时即可从二级缓存中直接获取其对应的结果对象。此时 T1 仍然未提交，这就出现了“脏读”的情况，显然不是用户期望的结果。
+
+![image-20230927150833791](image-20230927150833791.png) 
+
+​	按照CacheExecutor 的本身实现，事务 TI查询记录A 时二级缓存未命中，会查询数据库,因为是同一事务，所以可以查询到记录 A 并得到相应的结果对象，并且会将记录 A 保存到TransactionalCacheentriesToAddOnCommit 集合中。而事务T2第一次查询记录A时，二级缓存未命中，则会访问数据库，因为是不同的事务，数据库的“不可重复读”隔离级别会保证事务T2 无法查询到记录 A，这就避免了上面“脏读”的场景。在图 3-52 中，事务 T1 提交时会将entriesToAddOnCommit 集合中的数据添加到二级缓存中，所以事务T2第二次查询记录A时二级缓存才会命中，这就导致了同一事务中多次读取的结果不一致，也就是“不可重复读”的场景。
+
+​	读者可能提出的另一个疑问是 TransactionalCache.entriesMissedInCache 集合的功能是什么?为什么要在事务提交和回滚时，调用二级缓存的 putObject0方法处理该集合中记录的 key 呢?笔者认为，这与 BlockingCache 的支持相关。通过对 CachingExecutor.query0方法的分析我们知道，查询二级缓存时会使用 getObject0方法，如果二级缓存没有对应数据，则查询数据库并使
+
+​	用putObiect0方法将查询结果放入二级缓存。如果底层使用了 BlockingCache，则 getObiect0)方法会有对应的加锁过程，putObject0方法则会有对应的解锁过程，如果在两者之间出现异常，则无法释放锁，导致该缓存项无法被其他 SglSession 使用。为了避免出现这种情况，TransactionalCache 使用entriesMissedInCache 集合记录了未命中的 CacheKey，也就是那些加了锁的缓存项，而 entriesToAddOnCommit 集合可以看作 entriesMissedInCache 集合子集，也就是那些正常解锁的缓存项。对于其他未正常解锁的缓存项，则会在事务提交或回滚时进行解锁操作。
+​	最后，需要读者注意的是，CachingExecutor.update()方法并不会像 BaseExecutor.update0方法处理一级存那样，直接清除缓存中的所有数据，而是与CachingExecutor.query0方法一样调用flushCacheIfRequired0方法检测SQL节点的配置后，决定是否清除二级缓存。
+
+## 接口层
+
+​	SqlSession是MyBatis 核心接口之一，也是 MyBatis 接口层的主要组成部分，对外提供MyBatis 常用API。MyBatis 提供了两个SqlSession 接口的实现，如图所示，这里使用了工厂方法模式，其中开发人员最常用的是DefaultSqlSession 实现
+
+![image-20230927151135759](image-20230927151135759.png) 
+
+![image-20230927151214090](image-20230927151214090.png) 
+
+​	SqlSessionFactory 负责创建 SqlSession 对象，其中只包含了多个openSession0方法的重载可以通过其参数指定事务的隔离级别、底层使用 Executor 的类型以及是否自动提交事务等方面的配置。SqlSessionFactory 接口的定义比较简单，代码就不再展示了。
+​	在 SqlSession 中定义了常用的数据库操作以及事务的相关操作，为了方便用户使用，每种类型的操作都提供了多种重载。SglSession 接口的定义如下:
+
+![image-20230927151652760](image-20230927151652760.png) 
+
+​           ![image-20230927151721538](image-20230927151721538.png) 
+
+​        ![image-20230927151748169](image-20230927151748169.png)
+
+### 策略模式
+
+​	在实际开发过程中,实现某一功能可能会有多种算法,例如常用的排序算法就有插入排序选择排序、交换排序、归并排序等。有些场景下，系统需要根据输入条件以及运行环境选择不同的算法来完成某一功能，开发人员可以通过硬编码的方式将多种算法通过条件分支语句写到一个类中，但这显然是不符合“开放-封闭”原则的，当需要添加新的算法时，只能修改这个类的代码，破坏了这个类的稳定性。而且，将大量的复杂算法堆放到一起，代码看起来也会比较复杂，不易维护。
+​	为了解决上述问题，可以考虑使用策略模式。策略模式中定义了一系列算法，将每一个算法封装起来，由不同的类进行管理，并让它们之间可以相互替换。这样，每种算法都可以独立地变化。策略模式的类图
+
+![image-20230927152744119](image-20230927152744119.png) 
+
+​	Context 类表示算法的调用者，Strategy 接口表示算法的统一接口，ConcreteStrategy1 和ConcreteStrategy2表示具体的算法实现。
+​	当系统需要添加新的算法时，可以直接为 Strategy 接口添加新的实现类。开发人员也可以通过Context.setStrategy0方法设置新的 Strategy 接口实现，为应用程序更换具体的算法，这是符合“开放-封闭”原则的。另外，可以将反射技术与策略模式结合，这样应用程序就不需要了解所有 Strategy 接口实现类，而是在运行时通过反射的方式创建实际使用的 Strategy对象
+
+### SqlSession
+
+​	从本书开始到现在为止，所有的示例中使用的 SlSession 对象实现都是 DefaultSalSession类型，它也是单独使用 MyBatis 进行开发时最常用的 SglSession 接口实现。DefaultSglSession中核心字段的含义如下:
+
+![image-20230927153120217](image-20230927153120217.png) 
+
+在 DefaultSqlSession 中使用到了策略模式，DefaultSqlSession 扮演了 Context 的角色，而将所有数据库相关的操作全部封装到 Executor 接口实现中，并通过executor 字段选择不同的Executor 实现。
+
+DefaultSqlSession中实现了 SqlSession 接口中定义的方法,并且为每种数据库操作提供了多个重载。图为 select0方法、selectOne0方法、selectList0方法以及 selectMap0方法的各个重载方法之间的调用关系。
+
+![image-20230927153230878](image-20230927153230878.png) 
+
+​	上述重载方法最终都是通过调用 Executor.query(MappedStatement, bject,RowBounds,ResultHandler)方法实现数据库查询操作的，但各自对结果对象进行了相应的调整，例如selectOne0方法是从结果对象集合中获取了第一个元素返回;selectMap0方法会将 List类型的结果对象集合转换成 Map 类型集合返回;select0方法是将结果对象集合交由用户指定的ResultHandler 对象处理，且没有返回值:selectList0方法则是直接返回结果对象集合。
+
+​	DefaultSqlSessioninsert0方法、update0方法、delete0方法也有多个重载，它们最后都是通过调用的DefaultSqlSessionupdate(String,Object)方法实现的,该重载首先会将dirty字段置为true,然后再通过 Executorupdate0方法完成数据库修改操作。代码比较简单，就不再展示了。
+
+​	DefaultSqlSession.commit0方法、rollback0方法以及 close0方法都会调用 Executor 中相应的方法，其中就会涉及清空缓存的操作 (具体实现请读者参考 Executor 小节)，之后就会将 dirty字段设置为 false
+
+​	上述的dirty字段主要在isCommitOrRollbackRequired0方法中，与autoCommit字段以及用户传入的 force 参数共同决定是否提交/回滚事务，具体实现如下所示。该方法的返回值将作为Executor.commit0方法和 rollback0方法的参数。
+
+![image-20230927153509438](image-20230927153509438.png) 
+
+### DefaultSqlSessionFactory
+
+​	DefaultSqlSessionFactory 是一个具体工厂类，实现了 SqlSessionFactory 接口。DefaultSqlSessionFactory 主要提供了两种创建 DefaultSqlSession 对象的方式，一种方式是通过数据源获取数据库连接，并创建 Executor 对象以及 DefaultSqlSession 对象，该方式的具体实现如下:
+
+![image-20230927153624972](image-20230927153624972.png) 
+
+另一种方式是用户提供数据库连接对象，DefaultSglSessionFactory 会使用该数据库连接对象创建Executor 对象以及 DefaultSglSession 对象，具体实现如下:
+
+![image-20230927154618699](image-20230927154618699.png) 
+
+![image-20230927154631204](image-20230927154631204.png) 
+
+DefaultSqlSessionFactory 中提供的所有 openSession0方法重载都是基于上述两种方式创建DefaultSqlSession 对象的，这里不再赘述。
+
+### SqlSessionManager
+
+​	SqlSessionManager 同时实现了 SqlSession 接口和 SqlSessionFactory 接口，也就同时提供了SqlSessionFactory 创建SqlSession 对象以及SqlSession 操纵数据库的功能。SqlSessionManager 中各个字段的含义如下。
+
+![image-20230927155445564](image-20230927155445564.png) 
+
+![image-20230927155454349](image-20230927155454349.png) 
+
+​	SqlSessionManager与 DefaultSqlSessionFactory 的主要不同点是 SqlSessionManager提供了两种模式:第一种模式与DefaultSglSessionFactory 的行为相同，同一线程每次通过SqlSessionManager 对象访问数据库时，都会创建新的 DefaultSession 对象完成数据库操作;第二种模式是 SqlSessionManager 通过localSqlSession 这个 ThreadLocal变量，记录与当前线程绑定的 SqlSession对象，供当前线程循环使用，从而避免在同一线程多次创建 SalSession 对象带来的性能损失。
+​	首先来看SqlSessionManager 的构造方法，其构造方法都是私有的，如果要创建SqlSessionManager 对象，需要调用其 newInstance0)方法(但需要注意的是，这不是单例模式)。
+
+![image-20230927155752576](image-20230927155752576.png) 
+
+​	SqlSessionManager.openSession0方法以及其重载是直接通过调用其中底层封装的SqlSessionFactory 对象的 openSession0方法来创建 SqlSession 对象的，代码比较简单，就不再展示了。
+
+​	SqlSessionManager 中实现的 SqlSession 接口方法，例如 select*0、update0等，都是直接调用sqlSessionProxy字段记录的 SqlSession代理对象的相应方法实现的。在创建该代理对象时使用的InvocationHandler 对象是 SqlSessionInterceptor 对象，它是定义在SqlSessionManager 中的内部类，其invoke0方法实现如下:
+
+![image-20230927155924427](image-20230927155924427.png) 
+
+通过对SqlSessionInterceptor 的分析可知，第一种模式中新建的 SqlSession 在使用完成后会立即关闭。在第二种模式中，与当前线程绑定的SglSession 对象需要先通过 SqlSessionManagerstartManagedSession0方法进行设置，具体实现如下:
+
+![image-20230927160123562](image-20230927160123562.png) 
+
+当需要提交/回滚事务或是关闭 localSqlSession 中记录的SqlSession 对象时，需要通过SqlSessionManager.commit0、rollback0以及 close0方法完成，其中会先检测当前线程是否绑定了SglSession 对象,如果未绑定则抛出异常如果绑定了则调用该 SlSession 对象的相应方法。
+
+## 总结
+
+​	本章主要介绍了 MyBatis 核心处理层以及接口层中各个模块的功能和实现原理。首先介绍了MyBatis 初始化的流程，让读者了解 MyBatis是如何一步步从mybatis-config.xml配置文件以及映射配置文件中加载配置信息的。之后，介绍了 MyBatis 对 OGNL 表达式、静态/动态 SQI语句、用户传入的实参等信息的处理，从而得到可以交由数据库执行的 SOL 语句。然后分析了MyBatis 的核心功能之一--结果集映射，其中涉及了MyBatis 结果集映射的方方面面，例如简单映射、嵌套映射、嵌套查询、延迟加载、多结果集处理、游标实现原理以及对存储过程中输出类型参数的处理。之后还对 MyBatis 中提供的主键生成器(KeyGenerator)做了详细分析。最后介绍了 Executor 接口及其实现，其中对多个 Executor 接口实现类的特性做了分析，同时也分析了MyBatis中一级缓存和二级缓存的原理。
+在本章最后，介绍了 MyBatis 的接口层的相关实现。MyBatis 接口层比较简单，所以不再单独开一章进行介绍。在第 4 章中，还会分析另一个 SqlSession 接口的实现一SqlSessionTemplate，它主要用于 MyBatis 与 Spring 的集成开发场景中。
+理解 MyBatis 核心处理层和接口层的实现原理，帮助读者在实践中更好地使用MyBatis。
