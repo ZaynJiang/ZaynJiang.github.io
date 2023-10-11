@@ -392,3 +392,384 @@ SelectSqIParserinit0方法是 SelectSglParser 的初始化方法，其中就触�
   ![image-20230928145738976](image-20230928145738976.png) 
 
   ​	到此为止，MyBatis 插件模块涉及的设计理念、编写和配置方式、运行原理、使用场景等方面都已经介绍完了，希望读者能结合前面对 MyBatis 各个模块的分析，编写出性能良好、设计优秀的插件。 
+
+## spring集成
+
+​	Spring 是于2003 年兴起的一个轻量级的 Java 开发框架，其主要目的是解决企业级应用程序开发中的复杂性。由于 Spring 设计优良、接口简单易用，一经发布就得到了开发人员的追捧，最终力压EJB成为Java EE开发的主流框架。在介绍MyBatis 与Spring 集成开发之前，Spring有几个比较重要的概念需要在这里简单介绍一下
+
+### spring基础
+
+​	首先是IoC (Inversion ofControl，控制反转)，其思想是将开发人员设计好的对象交给 IoC容器控制，而不是直接在程序中通过 new 来创建需要的对象。当需要使用某个对象时，由 IoC容器创建该对象并注入依赖对象中。这样，客户端在使用某个组件时，可以直接从IOC 容器中获取该组件。
+​	如图所示，客户端需要同时了解类A和类B的具体实现以及它们的依赖关系，客户端在创建对象A和对象B之后,还需要根据依赖关系将对象B 设置到对象A的相关属性中。使用IoC容器之后，则如图所示类A和类B的依赖关系是通过配置文件告诉IOC容器的，由IoC容器创建对象A 和对象 B 并维护两者之间的关系，客户端在使用对象A 时，可以直接从IoC 容器中获取。
+
+![image-20231007103243241](image-20231007103243241.png) 
+
+​	另一个概念是 DI(Dependency Injection，依赖注入)，其含义是:对象之间的依赖关系是由容器在运行期决定的，也就是说，由容器动态地确定并维持两个对象之间的某个依赖关系。通过依赖注入机制，开发人员只需要通过简单的配置 (XML 或注解)，就可以确定依赖关系，实现组件的重用。
+​	最后来看AOP(Aspect Oriented Programming，面向切面编程)，它是对面向对象编程的补充和完善。在面向对象编程中，开发人员可以通过封装、继承、多态等概念建立对象的层次结构。在系统中，除了核心的业务逻辑，还会有权限检测、日志输出、事务管理等相关的代码，它们会散落在多个对象中，横跨整个对象层次结构，但是这些功能与核心业务逻辑并无直接关系。如果单纯使用面向对象程序设计，会导致这种代码大量重复出现，不利于模块的重用。AOP 利用“横切”技术将那些影响了多个类的公共代码抽取出来，封装到一个可重用的模块中，并将其称为 Aspect(切面)。这样就可以减少重复的代码，降低模块之间的合度，提高了系统的可维护性。下面简单介绍一下 AOP 中常见的名词。
+
+* 横切关注点
+
+  对哪些方法进行拦截，拦截后怎么处理，这些关注点称之为横切关注点。
+
+* 切面(aspect )
+
+  类是对物体特征的抽象，切面则是对横切关注点的抽象。
+
+* 连接点(joinpoint)
+
+  程序执行中明确的某个点，该点将会被拦截。Spring 只支持方法类型的连接点，所以在 Spring 中连接点指的就是被拦截到的方法。
+
+* 切入点(pointcut )
+
+  对连接点进行拦截的定义。
+
+* 通知(advice )
+
+  拦截到连接点之后要执行的代码，通知可以分为 5 类，分别是前置通知、后置通知、异常通知、最终通知、环绕通知。
+
+* 织入(weave)
+
+  将切面应用到目标对象，并创建相应代理对象的过程
+
+SpringAOP 最常见的应用场景就是事务管理，会介绍 SpringAOP 的配置
+
+### springMVC
+
+​	Spring MVC是Spring 提供的一个强大而灵活的Web架，它是一款实现了MVC设计模式的、请求驱动的轻量级Web 框架。Spring MVC使用MVC架构模式将 Web 层的各组件进行了解。借助 Spring 提供的注解功能，Spring MVC提供了POO(Plain Ordinary Java Object)的开发模式，使得开发和测试更加简单，开发效率更高。
+​	首先来简单介绍一下MVC(Model-View-Controller，模型-视图-控制器)架构模式。从名字上就可以看出，MVC 中核心的三部分是 Model(模型)、View(视图)、Controller (控制器)。其中，Model 主要负责封装需要在视图上展示的数据；视图只用于展示数据，不包含任何业务逻辑;控制器主要负责接收用户的请求，调用底层的 Service 层执行具体的业务逻辑，之后，业务逻辑会返回一些数据在视图上进行展示，控制器会收集这些数据并准备模型对象在视图上展示。图展示了MVC模式的核心组件和功能。
+
+![image-20231007103858303](image-20231007103858303.png) 
+
+​	MVC 模式主要是通过分离模型、视图以及控制器三部分,实现业务逻辑与界面之间的解耦MVC 模式的核心思想是将业务逻辑从界面中分离出来，允许它们单独变化且不会相互影响。
+
+​	在Spring MVC 应用程序中，Model通常由 POJO对象组成，它会在业务逻辑层中被处理在持久层中被持久化。视图常用方案是使用JSP 标准标签库 (JSTL)编写的JSP 模板。控制器则是通过Spring MVC 注解配置的Controller 类。
+
+​	DispatcherServlet 是一个前端控制器，是整个Spring MVC框架的核心组件。它主要负责整体流程的调度，在接收HTTP请求之后，会根据请求调用 Spring MVC 中的各个组件。拦截指定格式的URL请求，初始化 WebApplicationContext，初始化 Spring MVC 的各个组成组件，根据 Controller 返回的逻辑视图名选择具体的视图进行染等一系列工作，都是由DispatcherServlet 负责的。
+
+下面来看看 Spring MVC 中常用的接口及其含义。
+
+* Controller 接口
+
+  用户可以通过实现 Controller 接口实现控制器，但是多数情况下，使用的是@Controller 注解，被@Controller 修饰的类自动成为控制器
+
+* HandlerMapping 接口
+
+  主要负责用户请求到Controller 之间映射。
+
+* HandlerInterceptor 接口
+
+  拦截器，用户可以自定义实现，完成拦截请求的操作。
+
+* ModelAndView
+
+  Controller 处理完请求之后，会将视图的名称以及模型数据封装成ModelAndView 对象返回到 DispatcherServlet 中。
+
+* ViewResolver 接口
+
+  主要负责将视图的逻辑名称映射成具体的视图
+
+* View 接口
+
+  具体视图
+
+介绍完SpringMVC的核心组件之后，下面介绍SpringMVC处理一个HTTP请求的整体流如图所示
+
+![image-20231007104652525](image-20231007104652525.png) 
+
+* 用户通过浏览器发送HTTP 请求后，首先会提交到 Spring MV 中的 DispatcherServlet中进行处理。
+* DispatcherServlet 会根据请求查找一个或多个HandlerMapping,并根据 HandlerMapping查找处理请求的Controller
+* DispatcherServlet 将请求提交到 Controller 进行处理。
+* Controller 一般会调用 Service 层处理请求
+* Controller 调用 Service 层处理请求之后，会返回ModelAndView。
+* DispatcherServlet 会查询一个或多个 ViewResoler 视图解析器，进行视图解析(7)查找 ModelAndView 指定的视图。
+* HTTP 响应，View 负责将结果显示到客户端。
+
+### 环境搭建
+
+![image-20231007104805656](image-20231007104805656.png) 
+
+![image-20231007104839790](image-20231007104839790.png) 
+
+#### 配置web.xml
+
+#### 配置DataSource
+
+#### 配置application Context
+
+
+
+#### 配置springmvc-servlet.xml
+
+#### 配置mybatis-config.xml
+
+![image-20231007111517970](image-20231007111517970.png) 
+
+![image-20231007111526564](image-20231007111526564.png) 
+
+### Mybatis-Spring 剖析
+
+在上一小节的示例中，我们将MyBatis 与 Spring 进行了集成，其中使用了 mybatis-springX.XXjar 这个Jar 包。该JAR 的主要功能就是负责将 MyBatis 与 Spring 进行无缝集成，该jar包可以将 MyBatis 的事务交给 Spring 来管理，还可以将SqlSession 等对象交给 Spring 管理并由Spring IoC容器将SqlSession 对象注入到其他 Spring Bean 中。这一小节将详细介绍该jar 包的实现原理。
+
+#### SqlSessionFactoryBean
+
+​	在前面介绍MyBatis初始化过程时提到,SalSessionFactorvBuilder会通过XMLConfigBuildel等对象读取 mybatis-configxml 配置文件以及映射配置信息，得到 Configuration 对象，然后创建SqlSessionFactory 对象。而在与 spring 集成时，MyBatis 中的 SqlSessionFactory 对象则是由SqlSessionFactoryBean 创建的。在上一小节的集成示例中，applicationContext.xml 文件中配置了SqlSessionFactoryBean，其中指定了数据源对象、mybatis-configxml 配置文件的位置等信息SqlSessionFactoryBean 中定义了很多与MyBatis 配置相关的字段，如图所示。
+
+![image-20231007142800369](image-20231007142800369.png) 
+
+​	图 展示的所有字段对应了开发人员可以在 applicationContext.xml 配置文件中为SqlSessionFactoryBean 配置的配置项，同时，也都可以在 Configuration 对象中找到相应的字段,其含义就不再重复描述了。
+​	这里重点关注 SqlSessionFactoryBean 是如何创建 SqlSessionFactory 对象的，该功能是在SqlSessionFactoryBean.buildSqlSessionFactory0方法中实现的，其中涉及使用XMLConfigBuilder创建Configuration 对象、对Configuration 对象进行配置、使用XMLMapperBuilder 解析映射配置文件以及 Mapper 接口等一些列操作，这些操作的原理都在前面介绍过了。SqlSessionFactory-Bean.buildSqlSessionFactor方法的具体实现如下:
+
+![image-20231007144306913](image-20231007144306913.png) 
+
+![image-20231007144912905](image-20231007144912905.png) 
+
+#### SpringManagedTransaction
+
+​	通过上述分析可以了解到，如果在 applicationContext.xml 配置文件中没有明确为SqlSessionFactoryBean 指定transactionFactory 属性，则在 buildSqlSessionFactory0方法中默认使用SpringManagedTransactionFactory，该类实现了 TransactionFactory 接口，并实现了newTransaction0方法，其中返回的 Transaction 接口实现为 SpringManagedTransaction。
+
+​	SpringManagedTransaction 中核心字段的含义如下:
+
+![image-20231007145124815](image-20231007145124815.png) 
+
+​	SpringManagedTransaction.connection字段维护的JDBC 连接来自 Spring 事务管理器，当应用不再使用该连接时，会将其返还给 Spring 事务管理器。下面是 SpringManagedTransaction.get-Connection0方法和close0方法的具体实现:
+
+![image-20231007145345281](image-20231007145345281.png) 
+
+​	在SpringManagedTransaction.commit0方法和 rollback()方法中，会根据连接是否由 Spring管理以及事务是否要自动提交(即 isConnectionTransactional和autoCommit 两个字段的值)，决定是否真正提交/回滚事务。
+
+![image-20231007145655979](image-20231007145655979.png) 
+
+![image-20231007145704118](image-20231007145704118.png) 
+
+#### SqlSessionTemplate
+
+​	SqlSessionTemplate 是 MyBatis-Spring 的核心，它实现了 SqlSession 接口，在MyBatis 与Spring 集成开发时，用来代替 MyBatis 中的 DefaultSqlSession 的能，所以可以通过SqlSessionTemplate 对象完成指定的数据库操作。SqlSessionTemplate 是线程安全的，可以在 DAO(Data Access Object，数据访问对象)之间共享使用，其底层封装了 Spring 管理的 SqlSession对象。
+​	SqlSessionTemplate 中核心字段的含义如下:
+
+![image-20231007145829515](image-20231007145829515.png) 
+
+在SqlSessionTemplate 的构造方法中会初始化上述字段，具体实现如下: 
+
+![image-20231007150114509](image-20231007150114509.png) 
+
+SqlSessionTemplate 通过调用sqlSessionProxy 的相应方法实现了SqlSession 接口的所有方法这里重点来分析创建代理对象时使用的 InvocationHandler 接口实现--SqlSessionInterceptor,其invoke0方法实现如下:
+
+![image-20231007150154842](image-20231007150154842.png) 
+
+在 SqlSessionUtilsgetSession0方法中，会首先尝试从 Spring 事务管理器中获取 SqlSession对象，如果获取成功则直接返回，否则通过 SqlSessionFactory 新建SqlSession 对象并将其交由Spring事务管理器管理后返回，具体实现如下: 
+
+![image-20231007150340291](image-20231007150340291.png) 
+
+![image-20231007150332972](image-20231007150332972.png) 
+
+#### SqlSessionDaoSupport
+
+​	介绍完SqlSessionTemplate 的实现原理之后，简单介绍SqlSessionDaoSupport 的功能。SqlSessionDaoSupport 是一个实现了 DaoSupport 接口的抽象类，其主要功能是辅助开发人员编写DAO层实现。
+​	SqlSessionDaoSupport 的实现比较简单，它通过 sqlSession 字段维护了一个SqlSessionTemplate对象，并提供了 getSqlSession0方法供子类获取该 SqlSessionTemplate 对象使用。该SqlSessionTemplate 则是由其初始化时传入的 SqlSessionFactory 创建的。SqlSessionDaoSupport的构造方法如下:
+
+![image-20231007150713105](image-20231007150713105.png)  
+
+![image-20231007150739039](image-20231007150739039.png) 
+
+![image-20231007150756670](image-20231007150756670.png) 
+
+![image-20231007150808035](image-20231007150808035.png) 
+
+到此为止，Spring 如何管理MyBatis 的初始化、事务对象、SqlSession 对象以及开发人员如何编写DAO实现的内容已经介绍完了。 
+
+#### MapperFactoryBean
+
+​	在有些场景中，系统的 DAO 层实现比较简单，除了完成简单的数据库操作，没有任何其他的业务操作，这时使用SqlSessionDaoSupport 或SqlSessionTemplate编写DAO层实现的话重复的代码就显得比较多。
+​	为了代替手工使用 SqlSessionDaoSupport 或 SqlSessionTemplate 编写 DAO实现MyBatis-Spring 提供了一个动态代理的实现--MapperFactoryBean。它可以直接将 Mapper 接口注入到 Service 层的 Bean 中，这样开发人员就不需要编写任何 DAO实现的代码，在使用注入的Mapper 接口对象时，就如同使用DA一样，这是通过MapperFactoryBean为其自动创建代理对象实现的。
+MapperFactoryBean的具体配置示例如下:
+
+![image-20231007151557583](image-20231007151557583.png) 
+
+![image-20231007151659197](image-20231007151659197.png) 
+
+Spring 中InitializingBean 接口的afterPropertiesSet0方法主要用于完成 Bean 对象的初始化,在DaoSupport 抽象类中实现了该方法并在其中调用checkDaoConfig0这个抽象方法，这是模板方法模式的应用。DaoSupportafterPropertiesSet0)方法的具体实现如下:
+
+![image-20231007151719019](image-20231007151719019.png) 
+
+下面来看一下MapperFactoryBean.checkDaoConfig0方法如何处理指定的 Mapper 接口: 
+
+![image-20231007151734116](image-20231007151734116.png) 
+
+​	ConfigurationaddMapper0方法底层通过调用 MapperRegistryaddMapper0方法实现，在注册Mapper 接口的同时，会创建对应的 MapperProxyFactory 对象，还会解析对应的映射配置文件。该注册过程以及涉及的组件的功能,在 binding 模块的分析以及MyBatis 初始
+化流程的分析中都已介绍过了。MapperFactoryBean 除了实现了 SqSessionDaoSupport 抽象类，还实现了 Spring 提供的FactoryBean 接口，它是一个用于创建 Bean 对象的工厂接口，其中最核心的方法就是 getObject0方法。MapperFactoryBeangetObject0方法的实现如下:
+
+![image-20231007151853220](image-20231007151853220.png) 
+
+​	 binding 模块的相关介绍，其中提到了 Configuration.getMapper0方法底层通过MapperRegistrygetMapper0方法获取 Mapper 接口对应的 MapperProxyFactory对象然后通过该MapperProxyFactory对象，使用JDK动态代理的方式创建 Mapper 接口的代理对象并返回。
+
+#### MapperScannerConfigurer
+
+​	MapperFactoryBean的实现原理到这里就全部介绍完了。虽然通过MapperFactoryBean 可以简化DAO层实现，但需要在 applicationContext.xml文件中为每个Mapper 接口都添加相应的配置。当系统中 Mapper 接口数量比较少的时候，这样做还是可以的。但是当 Mapper 接口数量比较多时，就会产生大量配置的信息。读者可能已经想到解决方案了，将这些 Mapper 接口统一放到一个或几个包下,然后由一个扫描器扫描这几个包并加载其中的Mapper 接口。MyBatis-Spring中提供的 MapperScannerConfigurer 就是完成该功能的扫描器，其配置在环境搭建小节已经给展示了，这里就不重复了。
+
+​	下面来分析MapperScannerConfigurer 中核心字段的含义:
+
+![image-20231007152005362](image-20231007152005362.png) 
+
+​	MapperScannerConfigurer 实现了BeanDefinitionRegistryPostProcessor 接口，该接口中的postProcessBeanDefinitionRegistry0方法会在系统初始化的过程中被调用，该方法是MapperScannerConfigurer 实现扫描的关键，具体实现如下:
+
+![image-20231007152101454](image-20231007152101454.png) 
+
+ClassPathMapperScanner.scan0方法的核心逻辑在其doScan0方法中实现，具体实现如下
+
+![image-20231007152119264](image-20231007152119264.png) 
+
+![image-20231007152124526](image-20231007152124526.png) 
+
+ClassPathMapperScanner.processBeanDefinitions0方法会对 dScan(方法中扫描到的BeanDefinition 集合进行修改，主要是将其中记录的接口类型改造为 MapperFactoryBean 类型并填充MapperFactoryBean 所需的相关信息，这样，后续即可通过MapperFactoryBean完成相应功能了。ClassPathMapperScannerprocessBeanDefinitions0方法的具体实现如下: 
+
+![image-20231007152145262](image-20231007152145262.png) 
+
+## 其它
+
+### 动态 SQL
+
+​	之前有过Mybatis 使用经历的读者，应该了解MyBatis 中动态SOL的强大功能，我们可以根据自己的需要，编写出十分灵活的动态 SQL 语句。下面先来看一个比较常见的动态 SQL的写法，如下所示。该动态SOL语句会根据用户传入的实参，拼凑出查找t customer 表的where子句部分，并将查询的结果集映射成Customer 对象。
+
+![image-20231008103108661](image-20231008103108661.png) 
+
+除了此 SOL 节点，该映射配置文件中还有另一条动态 SOL 语句，如下所示。该动态 SQL语句会根据用户传入的实参，拼凑出连接查询  customer 表和 t order 表的 where 子句部分，并将查询的结果集映射成Order 对象，其中还关联了一个 Customer 对象。
+
+![image-20231008103845828](image-20231008103845828.png) 
+
+![image-20231008103855340](image-20231008103855340.png) 
+
+​	假设现在有一个需求,需要去除对t customer 表中sex字段和name字段查询以及条件判断这就需要修改 findCustomerList 节点中 select 语句查询的列名以及其 where 子句部分，以及findOrderList 节点中 select语句查询的列名及其 where 子句部分，总共四个地方。如果存在更多涉及tcustomer 表的查询，要修改的位置会更多，这样显然不易于维护。
+​	读者在设计动态 SOL 语句时，可以考虑使用<sql>节点，将SQL 语句中的公共部分独立出来，然后使用<include>节点引入这些公共部分。在该示例中，可以将表t customer 和表 t order中需要查询的字段分别封装到<sql>节点中，可得到如下<sql节点定义:
+
+![image-20231008103953951](image-20231008103953951.png) 
+
+另外，还可以将表t customer 和表t order 涉及的where 子分别封装到<sqI>节点中，可得到如下<sq>节点定义:
+
+![image-20231008104016079](image-20231008104016079.png) 
+
+![image-20231008104028186](image-20231008104028186.png) 
+
+示例中的两条动态 SQL 语句可以直接通过<include>节点引用上述<sq>节点，这样能够复用<sql>节点。动态 SQL语句的定义如下，这样维护起来就非常简单了，只需要修改<sq>节点中的内容即可。 
+
+![image-20231008104050495](image-20231008104050495.png) 
+
+![image-20231008104102394](image-20231008104102394.png) 
+
+### OgnlUtils工具类
+
+​	通过前面几章对 MyBatis 原理和代码的分析可知，OGNL表达式主要应用在两个地方，一个是在动态SOL语句中，例如在<if节点的 test 属性以及<bind节点的 value 属性，MyBatis会通过OGNL计算这些表达式的值之后，再开始进行动态 SQL的解析。另一个是在“SB”参数中，例如S{name表达式，MyBatis 会通过OGNL解析该表达式并进行替换。
+​	在上一小节的示例中，存在大量的<if节点，其中的 test 属性主要的工作是对用户传入的实参进行检测，这些检测大都是判断是否为 null。现在假设需要修改 test 属性的判断条件，例如增加判断实参是否为空字符串，这就需要开发人员查找整个映射配置文件进行修改，这显然不是一个可行的方案。
+​	笔者建议提供一个OgnlUtils 类，其中提供多个用于条件检测的静态方法。下面是OgnlUtils工具类的简单示例,仅供参考,读者可以根据自己的实际业务,添加新的静态方法,扩充OgnlUtils工具类。
+
+![image-20231008110137306](image-20231008110137306.png) 
+
+上述OgnlUtils中提供的方法多数依赖 BeanUtils 工具类，BeanUtils 中封装了对常见对象的判断方法，读者可以根据自己的实际业务进行扩充，本例中涉及的 BeanUtils 实现如下:
+
+![image-20231008110157618](image-20231008110157618.png) 
+
+![image-20231008110209055](image-20231008110209055.png) 
+
+![image-20231008110222219](image-20231008110222219.png) 
+
+​	读者可以考虑使用 Apache BeanUtils 结合实际需求，丰富自己的 BeanUtils 工具。ApacheBeanUtils 是 Apache 提供的操作 JavaBean 的工具包，它的底层是通过 Java 反射技术实现的。Apache BeanUtils提供了提取/设置JavaBean 属性值的功能,其中自带了很多Converter 转换器用户也可以自定义Converter进行扩展。Apache BeanUtils还提供了对多个JavaBean 对象动态排序的功能，动态创建JavaBean的功能等，很多开源框架，例如 Spring、Struts 等都使用了ApacheBeanUtils 工具包。
+​	最后，我们回到对 OgnlUtis 工具类的介绍。介绍OGNL 表达式时提到了，它可以通过“@类名@静态方法名0”的方式调用指定类的指定静态方法，OgnlUtils 工具类的使用方式也是如此，下面通过一个动态 SQL 节点进行展示。
+
+![image-20231008110258939](image-20231008110258939.png) 
+
+### SQL语句生成器
+
+​	相信很多 Java 开发人员都经历过一件非常痛苦的事情，就是在 Java代码中套编写 SOI语句。之所以会这么做，是为了根据某些外部条件，例如用户传入的参数、系统运行的环境变量或者其他影响系统运行的因素，动态生成需要的 SOL 语句
+​	正如前文介绍的那样，MBatis 提供的映射配置文件中有一套强大的动态SOL生成方案可以满足大多数动态 SQL 语句的需求。但是，有的场景下，在 Java 代码中嵌套构造 SQL语句也是必要的。此时，MyBatis 提供的SOL 语句生成器就可以派上用场了。
+​	在MyBatis官方文档中给出下面的SOL语示例:
+
+![image-20231008110439231](image-20231008110439231.png) 
+
+​	如果要在 Java 程序中动态生成上述 SOL 语句，就需要考虑引号、WHERE、AND、OR、括号等符号和关键字出现次数和位置，最终写出来的程序也非常复杂且不易于维护,用 MyBatis官方文档上的话来说，这简直就是一场噩梦。
+​	我们可以使用MyBatis 中提供的SOL类重新组织上述SOL语句，具体实现如下:
+
+![image-20231008110502090](image-20231008110502090.png) 
+
+![image-20231008110511261](image-20231008110511261.png) 
+
+​	很明显，使用 SQL类重新组织该 SOL 语之后，SQL 语句的结构就比较清晰了，开发人员也不必特别小心地拼凑 SQL 语句的关键字和特殊字符了。
+​	SOL类还可以根据外部条件，动态拼凑SOL语句，示例如下:
+
+![image-20231008111153847](image-20231008111153847.png) 
+
+SQL类除了可以生产 select 语句，还可以动态生成insert、update、delete 等类型的 SQL语句，示例如下: 
+
+![image-20231008111214130](image-20231008111214130.png) 
+
+### 动态SQL脚本插件
+
+​	SqINode&SqlSource 小节中，介绍了动态 SQL语的解析和处理，其中所有的SQL 节点都是基于XML 的标签，这些都是由MyBatis 提供的语言驱动器orgapache.ibatisscriptingxmltagsXmlLanguageDriver 支持的。默认情况下，MyBatis 使用的就是XmlLanguageDriver这个驱动器，其别名为“XML”，Configuration构造函数中的如下代码可以印证这两条信息:
+
+![image-20231008111405257](image-20231008111405257.png) 
+
+![image-20231008111413963](image-20231008111413963.png) 
+
+​	MyBatis 除了为用户提供了默认的XML版本动态SOL语言驱动器，还提供了扩展接口。用户只要提供 org.apacheibatisscripting.LanguageDriver 接口的实现，并进行相应的配置，就可以让MyBatis支持用户自定义的动态 SOL语言驱动器，这样，用户就可以使用自己熟悉的脚本编写动态SQL语句了。
+​	现在假设有一个实现了 LanguageDriver 接口的驱动器MyLanguageDriver，相应配置如下:
+
+![image-20231008111507612](image-20231008111507612.png) 
+
+除了将用户自定义配置为默认语言驱动器，还可以针对特殊的语句指定特定语言驱动器相关配置如下:
+
+![image-20231008112253268](image-20231008112253268.png) 
+
+​	目前，MyBatis 支持的动态 SOL 脚本语除了最常用的 XML 版本，还支持 Velocity 和Freemarker 两种。配置不同的脚本语言来编写动态SOL语句的主要目的，就是使用用户自身熟悉的脚本语言，降低学习门槛。
+
+​	这里通过一个示例介绍MyBatis-Velocity 的使用。首先下载mybatis-velocity-1.3,jar 以及相关依赖jar，并添加到项目的 CLASSPATH中。然后配置 mybatis-config.xml配置文件，velocity版本的驱动类注册别名，并将其设置为默认的动态 SOL 语言驱动类，具体配置如下:
+
+![image-20231008112414713](image-20231008112414713.png) 
+
+Velocity 版本的驱动类到此就注册完成了，读者可以在映射配置文件中添加如下动态 SQL节点进行测试，该动态SOL 语句是由 Velocity 编写的。
+
+![image-20231008112432626](image-20231008112432626.png) 
+
+### MyBatis-Generator
+
+​	在使用 Mybati 框架时，耗时最长的工作应该就是书写映射配置文件，开发人员由于手动编写，会比较枯燥(虽然比在Java 中套编写 SQL 语句好，但也挺枯燥的)，也很容易出错。为了更大程度地解放程序员的双手，MyBatis 提供了一个 Mybatis-Generator 工具，帮助开发人员自动生成映射配置文件。本小节通过一个示例,为读者介绍MyBatis-Generator工具的基本使用。
+
+​	首先需要从MyBatis 官方 GitHub 上下载MyBatis-Generator-1.3.5这个zip包，其中包含的mybatis-generator-core-1.3.5.jar 就是 MyBatis-Generator 的核心jar 包本例使用 MySOL数据库,所以还需要准备 mysql-connector-javajar
+
+​	之后需要提供一个generatorConfig.xml配置文件它是 MyBatis-Generator 的核心配置文件在generatorConfigxml配置文件中指定了数据库驱动类、数据库连接地址、数据库的用户名和密码、生成的配置文件和Java 类的位置。本例中的 generatorConfig.xml配置文件如下:
+
+![image-20231008112611742](image-20231008112611742.png) 
+
+![image-20231008112619284](image-20231008112619284.png) 
+
+然后启动一个命令行窗口，导航到 mybatis-generator-core-1.3.5jar 所在的目录下，并将上述generatorConfigxml配置文件放到该目录下，如图4-13所示
+
+![image-20231008112635427](image-20231008112635427.png) 
+
+在命令行窗口中执行如下命令，其中通过“-configfle”参数指定generatorConfigxml配置文件的位置，指定“-overwrite”参数表示生产的文件覆盖已有文件:
+
+![image-20231008144207362](image-20231008144207362.png) 
+
+命令执行成功后，可以看到如下字样: 
+
+![image-20231008144227447](image-20231008144227447.png) 
+
+将生成的代码导入到集成开发环境中，可以得到如图所示的结果
+
+![image-20231008144251766](image-20231008144251766.png) 
+
+这里只介绍t user 表以及其生成结果，t user 表的结果如下:
+
+![image-20231008144319714](image-20231008144319714.png) 
+
+![image-20231008144335422](image-20231008144335422.png) 
+
+t user 表对应生成的 UserMapper.xml映射配置文件如下，MyBatis-Generator 生成的映射配置文件中已经有了基本的CRUD操作对应的SOL语，其中还自动生成了相应的动态SOL语句，读者可以按照需求，在其基础上做进一步修改。
+
+![image-20231008144357754](image-20231008144357754.png) 
+
+![image-20231008144430531](image-20231008144430531.png) 
+
+![image-20231008144448757](image-20231008144448757.png) 
+
+### 总结
+
+​	本章首先介绍了 MyBatis 中提供的插件扩展方式，分析了其中使用的责任链模式，分析了插件的编写和配置方式、运行原理，最后简单介绍了笔者在实践中应用 MyBatis 插件的几个场景以及常见插件的具体实现。之后，介绍了 MyBatis 与 Spring 的集成开发的相关内容，搭建了Spring 4.3、MyBatis 3.4、Spring MVC 的集成开发环境，并完成了简单的测试，同时还介绍了集成开发中相关配置文件中各项配置的含义。然后剖析了MyBatis-Spring 中核心组件的实现原理。最后介绍了一些在使用MyBatis 编程时用到的小技巧以及前面章节未涉及的内容其中包括<sl节点的应用、对OGNL表达式的封装以及对 SOL语句生成器、动态SOL 脚本驱动器的介绍还通过一个示例介绍了如何使用MyBatis-Generator 工具由数据表逆向生成项目中 Model类Mapper 接口以及映射配置文件。
+​	在希望读者通过本章的阅读，能更好地理解 MyBatis 插件的原理，更深入地理解 MyBatis与Spring 集成开发的原理，了解一些 MyBatis 官方提供的工具，有助于提高开发效率
