@@ -400,6 +400,48 @@ Batch batch = runtimeService.createModification("exampleProcessDefinitionId")
 
 流程引擎是 **不能** 检测到修改是否会产生这样的结果。所以这取决于这个 API 的用户，他们要确保所做的修改不会使流程实例处于不希望的状态。然而如果出现这个情况，也可以使用流程实例的修改API也是修复:-)
 
+## 重启&恢复实例
+
+在流程实例终止后，其历史数据仍然存在，并且可以被访问以重启流程实例，前提是历史级别被设置为FULL。 例如，当流程没有以期望的方式终止时，重启流程实例是有用的。这个API的使用的其他可能情况有：
+
+- 恢复被错误地取消的流程实例的到最后状态
+- 由于错误路由导致流程实例终止后，重启流程实例
+
+为了执行这样的操作，流程引擎提供了 *流程实例重启API* `RuntimeService.restartProcessInstances(..)` 。该API允许通过使用流式构建器在一次调用中指定多个实例化指令
+
+**从技术上讲，创建的是一个新的流程实例。请注意: 历史流程和重启的流程实例的id是不同的**
+
+该API的功能特性有：
+
+* 流程实例列表
+
+  ```
+  ProcessDefinition processDefinition = ...;
+  List<String> processInstanceIds = ...;
+  
+  runtimeService.restartProcessInstances(processDefinition.getId())
+    .startBeforeActivity("activity")
+    .processInstanceIds(processInstanceIds)
+    .execute();
+  ```
+
+* 历史流程实例查询
+
+  ```
+  runtimeService.restartProcessInstances(processDefinition.getId())
+    .startBeforeActivity("activity")
+    .historicProcessInstanceQuery(historicProcessInstanceQuery)
+    .execute();
+  ```
+
+* 可跳过监听器&输入输出映射
+
+* 使用最初的变量
+
+* 忽略businessKey
+
+* 同步&异步执行
+
 ## 拓扑排序
 
 bpmn图为一种有向有环图，如何遍历这个有向图呢？

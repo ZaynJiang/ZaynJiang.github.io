@@ -639,17 +639,17 @@ inode类型的页就是为了存储inode entry结构而存在的
 
 如图所示，向操作系统申请的缓存区结构如下，每一个缓存页都会对应一个控制信息单元，相当于缓存页的元信息。碎片是缓存页大小设置不合理导致一部分空间没有被利用到。真实的缓存区大小会比缓存页大5%左右
 
-### 缓存页的管理
+### 缓存页的管理（free链表）
 
 ​	最开始的时候缓存页都是空的，后面会陆续填充磁盘的数据页，于是可以把空的控制块组成一个链表，叫做free链表，来方便进行管理。当然这个链表有个基节点，这个节点不属于缓存区，只占40字节。
 
 ![img](控制单元free链表.jpg)  
 
-### 缓存页查找
+### 缓存页查找(hash)
 
 ​	通过表空间号+页号确定一个key。放在hash表中，来了一个key，先判断它在不在缓存页中，不在的话从磁盘页读取，在的话从缓存区查找。控制信息就是存的是表空间id，页号，以及缓存页地址。
 
-### 缓存页修改
+### 缓存页修改(flush链表)
 
 ​	当某一个缓存页发生修改，mysql并不会立即同步更新到磁盘页之中，因为会非常损耗性能，会先更新缓存页，后续再更新， 已更新的缓存页叫做脏页，如果区分脏页呢，这里创建了一个flush链表，代表发生修改的缓存页的控制块链表
 
@@ -701,4 +701,187 @@ chunk_size的值只能在服务器启动时指定，在服务器运行过程中�
 
 5.7.5以后可以动态调整buffer pool的大小
 
+### Buffer Pool注意事项
+
+* innodb_buffer_pool_size 必须是 innodb_buffer_pool_chunk_size × innodb_buffer_pool_instances 的倍数（这主要是想保证每一个 Buffer Pool 实例中包含的 chunk 数量相同）。
+
+  假设我们指定的 innodb_buffer_pool_chunk_size 的值是 128M ， innodb_buffer_pool_instances 的值是16 ，那么这两个值的乘积就是 2G ，也就是说 innodb_buffer_pool_size 的值必须是 2G 或者 2G 的整数倍。比方说我们在启动 MySQL 服务器是这样指定启动参数的：
+
+  ```
+  mysqld --innodb-buffer-pool-size=8G --innodb-buffer-pool-instances=16
+  ```
+
+  默认的 innodb_buffer_pool_chunk_size 值是 128M ，指定的 innodb_buffer_pool_instances 的值是 16 ，所以 innodb_buffer_pool_size 的值必须是 2G 或者 2G 的整数倍，上边例子中指定的innodb_buffer_pool_size 的值是 8G ，符合规定，所以在服务器启动完成之后我们查看一下该变量的值就是我们指定的 8G （8589934592字节）： 
+
+  ![image-20231122163538389](image-20231122163538389.png) 
+
+  如果我们指定的 innodb_buffer_pool_size 大于 2G 并且不是 2G 的整数倍，那么服务器会自动的把innodb_buffer_pool_size 的值调整为 2G 的整数倍，比方说我们在启动服务器时指定的innodb_buffer_pool_size 的值是 9G ：
+
+  ```
+  mysqld --innodb-buffer-pool-size=9G --innodb-buffer-pool-instances=16
+  ```
+
+  那么服务器会自动把 innodb_buffer_pool_size 的值调整为 10G （10737418240字节），不信你看： 
+
+  ![image-20231122163646056](image-20231122163646056.png) 
+
+* 如果在服务器启动时， innodb_buffer_pool_chunk_size × innodb_buffer_pool_instances 的值已经大于 innodb_buffer_pool_size 的值，那么 innodb_buffer_pool_chunk_size 的值会被服务器自动设置为innodb_buffer_pool_size/innodb_buffer_pool_instances 的值。
+
+  比方说我们在启动服务器时指定的 innodb_buffer_pool_size 的值为 2G ，innodb_buffer_pool_instances 的值为16， innodb_buffer_pool_chunk_size 的值为 256M ：
+
+  ```
+  mysqld --innodb-buffer-pool-size=2G --innodb-buffer-pool-instances=16 --innodb-buffe
+  r-pool-chunk-size=256M
+  ```
+
+  由于 256M × 16 = 4G ，而 4G > 2G ，所以 innodb_buffer_pool_chunk_size 值会被服务器改写为innodb_buffer_pool_size/innodb_buffer_pool_instances 的值，也就是： 2G/16 = 128M （134217728字节），不信你看：
+
+  ![image-20231122163806076](image-20231122163806076.png) 
+
+  
+
+### Buffer Pool中存储其它信息
+
+Buffer Pool 的缓存页除了用来缓存磁盘上的页面以外，还可以存储锁信息、自适应哈希索引等信息
+
+### Buffer Pool的状态信息
+
+SHOW ENGINE INNODB STATUS 语句来查看关于 InnoDB 存储引擎运行过程中的一些状态信息，其中就包括 Buffer Pool 的一些信息，我们看一下（为了突出重点，我们只把输出中关于Buffer Pool 的部分提取了出来）： 
+
+![image-20231122150713461](image-20231122150713461.png) 
+
+每个值都代表什么意思：
+
+* Total memory allocated 
+
+  代表 Buffer Pool 向操作系统申请的连续内存空间大小，包括全部控制块、缓存页、以及碎片的大小。
+
+* Dictionary memory allocated
+
+  为数据字典信息分配的内存空间大小，注意这个内存空间和 Buffer Pool没啥关系，不包括在 Total memory allocated 中。
+
+* Buffer pool size 
+
+  代表该 Buffer Pool 可以容纳多少缓存 页 ，注意，单位是 页 ！
+
+* Free buffers 
+
+  代表当前 Buffer Pool 还有多少空闲缓存页，也就是 free链表 中还有多少个节点。
+
+* Database pages
+
+  代表 LRU 链表中的页的数量，包含 young 和 old 两个区域的节点数量。
+
+* Old database pages 
+
+  代表 LRU 链表 old 区域的节点数量。
+
+* Modified db pages 
+
+  代表脏页数量，也就是 flush链表 中节点的数量。
+
+* Pending reads
+
+  正在等待从磁盘上加载到 Buffer Pool 中的页面数量。当准备从磁盘中加载某个页面时，会先为这个页面在 Buffer Pool 中分配一个缓存页以及它对应的控制块，然后把这个控制块添加到 LRU 的 old 区域的头部，但是这个时候真正的磁盘页并没有被加载进来， Pending reads 的值会跟着加1。
+
+* Pending writes LRU
+
+  即将从 LRU 链表中刷新到磁盘中的页面数量。
+
+* Pending writes flush list
+
+  即将从 flush 链表中刷新到磁盘中的页面数量。
+
+* Pending writes single page
+
+  即将以单个页面的形式刷新到磁盘中的页面数量。
+
+* Pages made young
+
+  代表 LRU 链表中曾经从 old 区域移动到 young 区域头部的节点数量。
+
+  这里需要注意，一个节点每次只有从 old 区域移动到 young 区域头部时才会将 Pages made young 的值加1，也就是说如果该节点本来就在 young 区域，由于它符合在 young 区域1/4后边的要求，下一次访问这个页面时也会将它移动到 young 区域头部，但这个过程并不会导致 Pages made young 的值加1
+
+* Page made not young 
+
+  在将 innodb_old_blocks_time 设置的值大于0时，首次访问或者后续访问某个处在 old 区域的节点时由于不符合时间间隔的限制而不能将其移动到 young 区域头部时， Page made not young 的值会加1。
+
+  这里需要注意，对于处在 young 区域的节点，如果由于它在 young 区域的1/4处而导致它没有被移动到young 区域头部，这样的访问并不会将 Page made not young 的值加1。
+
+* youngs/s 
+
+  代表每秒从 old 区域被移动到 young 区域头部的节点数量。
+
+* non-youngs/s 
+
+  代表每秒由于不满足时间限制而不能从 old 区域移动到 young 区域头部的节点数量。
+
+* Pages read 、 created 、 written 
+
+  代表读取，创建，写入了多少页。后边跟着读取、创建、写入的速率。
+
+* Buffer pool hit rate
+
+  表示在过去某段时间，平均访问1000次页面，有多少次该页面已经被缓存到Buffer Pool 了。
+
+* young-making rate
+
+  表示在过去某段时间，平均访问1000次页面，有多少次访问使页面移动到 young 区域的头部了。需要大家注意的一点是，这里统计的将页面移动到 young 区域的头部次数不仅仅包含从 old 区域移动到young 区域头部的次数，还包括从 young 区域移动到 young 区域头部的次数（访问某个 young 区域的节点，只要该节点在 young 区域的1/4处往后，就会把它移动到 young 区域的头部）。
+
+* not (young-making rate) 
+
+  表示在过去某段时间，平均访问1000次页面，有多少次访问没有使页面移动到 young 区域的头部。需要大家注意的一点是，这里统计的没有将页面移动到 young 区域的头部次数不仅仅包含因为设置了innodb_old_blocks_time 系统变量而导致访问了 old 区域中的节点但没把它们移动到 young 区域的次数，还包含因为该节点在 young 区域的前1/4处而没有被移动到 young 区域头部的次数。
+
+* LRU len 
+
+  代表 LRU链表 中节点的数量。
+
+* unzip_LRU 
+
+  代表 unzip_LRU链表 中节点的数量（由于我们没有具体唠叨过这个链表，现在可以忽略它的值）。
+
+* I/O sum 
+
+  最近50s读取磁盘页的总数。
+
+* I/O cur 
+
+  现在正在读取的磁盘页数量。
+
+* I/O unzip sum 
+
+  最近50s解压的页面数量。
+
+* I/O unzip cur 
+
+  正在解压的页面数量。
+
 ### 小结
+
+* 磁盘太慢，用内存作为缓存很有必要。
+
+* Buffer Pool 本质上是 InnoDB 向操作系统申请的一段连续的内存空间，可以通过innodb_buffer_pool_size 来调整它的大小。
+
+* Buffer Pool 向操作系统申请的连续内存由控制块和缓存页组成，每个控制块和缓存页都是一一对应的，在填充足够多的控制块和缓存页的组合后， Buffer Pool 剩余的空间可能产生不够填充一组控制块和缓存页，这部分空间不能被使用，也被称为 碎片 。
+
+* InnoDB 使用了许多 链表 来管理 Buffer Pool 。
+
+* free链表 中每一个节点都代表一个空闲的缓存页，在将磁盘中的页加载到 Buffer Pool 时，会从 free链表 中寻找空闲的缓存页。
+
+* 为了快速定位某个页是否被加载到 Buffer Pool ，使用 表空间号 + 页号 作为 key ，缓存页作为 value ，建立哈希表。
+
+* 在 Buffer Pool 中被修改的页称为 脏页 ，脏页并不是立即刷新，而是被加入到 flush链表 中，待之后的某个时刻同步到磁盘上。
+
+* LRU链表 分为 young 和 old 两个区域，可以通过 innodb_old_blocks_pct 来调节 old 区域所占的比例。首次从磁盘上加载到 Buffer Pool 的页会被放到 old 区域的头部，在 innodb_old_blocks_time 间隔时间内访问该页不会把它移动到 young 区域头部。在 Buffer Pool 没有可用的空闲缓存页时，会首先淘汰掉 old 区域的一些页。
+
+* 我们可以通过指定 innodb_buffer_pool_instances 来控制 Buffer Pool 实例的个数，每个 Buffer Pool 实例中都有各自独立的链表，互不干扰。
+
+* 自 MySQL 5.7.5 版本之后，可以在服务器运行过程中调整 Buffer Pool 大小。每个 Buffer Pool 实例由若干个 chunk 组成，每个 chunk 的大小可以在服务器启动时通过启动参数调整。
+
+* 可以用下边的命令查看 Buffer Pool 的状态信息：
+
+  ```
+  SHOW ENGINE INNODB STATUS\G
+  ```
+
+  
