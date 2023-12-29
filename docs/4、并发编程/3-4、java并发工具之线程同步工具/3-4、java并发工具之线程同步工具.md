@@ -18,7 +18,7 @@
   diff = check(pos, dos);
   // 差异写入差异库
   save(diff);
-``` 
+```
 这种非常原始的方法其实并不是最佳的方案，jdk提供了一些列的线程同步相关的工具类供我们使用。
 
 ## 1. CountDownLatch
@@ -125,7 +125,7 @@ new Thread(()->doBizA())
   .start();
 new Thread(()->doBizB())
   .start();  
-```  
+```
 但是java在1.8版本提供了 CompletableFuture 这个类，大大提升了java并发编程的能力。  
 
 选取一个执行结果返回，竞争获胜的返回。
@@ -137,7 +137,7 @@ static <U> CompletableFuture<U> supplyAsync(Supplier<U> supplier)
 // 可以指定线程池  
 static CompletableFuture<Void> runAsync(Runnable runnable, Executor executor)
 static <U> CompletableFuture<U> supplyAsync(Supplier<U> supplier, Executor executor)  
-```  
+```
 如上是创建CompletableFuture对象的四个方法 ,runAsync没有返回值，supplyAsync有返回值
 
 
@@ -199,7 +199,10 @@ CompletableFuture 类还实现了 CompletionStage 接口，这个接口的功能
       f1.applyToEither(f2,s -> s);
     
     System.out.println(f3.join());
-
+  ```
+  
+  ```
+  
   ```
 * 异常处理
 fn、consumer、action如果抛出了异常，我们可以采用CompletableFuture的链式编程来处理异常。
