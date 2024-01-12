@@ -966,7 +966,415 @@ controlBehavior 的取值与使用的 TrafficShapingController 对应关系如�
 
   要配置限流规则使用匀速通过效果控制器 RateLimiterController，则必须配置限流阈值类型为 GRADE_QPS，并且阈值要少于等于 1000。例如：
 
-### guava参考
+  ```java
+  FlowRule flowRule = new FlowRule();
+  flowRule.setCount(30);
+  // 流量控制效果配置为使用匀速限流控制器
+  flowRule.setControlBehavior(RuleConstant.CONTROL_BEHAVIOR_RATE_LIMITER);
+  // 虚拟队列的最大等待时长，排队等待时间超过这个值的请求会被拒绝
+  flowRule.setMaxQueueingTimeMs(1000);
+  flowRule.setResource("GET:/hello");    
+  FlowRuleManager.loadRules(Collections.singletonList(flowRule));
+  ```
+
+  RateLimiterController 的字段和构造方法源码如下：
+
+  ```java
+  public class RateLimiterController implements TrafficShapingController {
+      private final int maxQueueingTimeMs;
+      private final double count;
+      private final AtomicLong latestPassedTime = new AtomicLong(-1);
+  
+      public RateLimiterController(int timeOut, double count) {
+          this.maxQueueingTimeMs = timeOut;
+          this.count = count;
+      }
+  }
+  ```
+
+  - maxQueueingTimeMs：请求在虚拟队列中的最大等待时间，默认 500 毫秒。
+  - count：限流 QPS 阈值。
+  - latestPassedTime：最近一个请求通过的时间，用于计算下一个请求的预期通过时间。
+
+  RateLimiterController 实现的 canPass 方法源码如下：
+
+  ```java
+      @Override
+      public boolean canPass(Node node, int acquireCount, boolean prioritized) {
+          //....
+          // (1) 
+          long currentTime = TimeUtil.currentTimeMillis();
+          long costTime = Math.round(1.0 * (acquireCount) / count * 1000);
+          // (2) 
+          long expectedTime = costTime + latestPassedTime.get();
+          // （3）
+          if (expectedTime <= currentTime) {
+              latestPassedTime.set(currentTime);
+              return true;
+          } else {
+              // （4） 
+              long waitTime = costTime + latestPassedTime.get() - TimeUtil.currentTimeMillis();
+              if (waitTime > maxQueueingTimeMs) {
+                  return false;
+              } else {
+                  try {
+                      // （5）
+                      long oldTime = latestPassedTime.addAndGet(costTime);
+                      waitTime = oldTime - TimeUtil.currentTimeMillis();
+                      if (waitTime > maxQueueingTimeMs) {
+                          // （6）
+                          latestPassedTime.addAndGet(-costTime);
+                          return false;
+                      }
+                      // （7）
+                      if (waitTime > 0) {
+                          Thread.sleep(waitTime);
+                      }
+                      return true;
+                  } catch (InterruptedException e) {
+                  }
+              }
+          }
+          return false;
+      }
+  ```
+
+  **1. 计算队列中连续的两个请求的通过时间的间隔时长**
+
+  假设阈值 QPS 为 200，那么连续的两个请求的通过时间间隔为 5 毫秒，每 5 毫秒通过一个请求就是匀速的速率，即每 5 毫秒允许通过一个请求。
+
+  **2. 计算当前请求期望的通过时间**
+
+  请求通过的间隔时间加上最近一个请求通过的时间就是当前请求预期通过的时间。
+
+  **3. 期望通过时间少于当前时间则当前请求可通过并且可以立即通过**
+
+  理想的情况是每个请求在队列中排队通过，那么每个请求都在固定的不重叠的时间通过。但在多核 CPU 的硬件条件下可能出现多个请求并行通过，这就是为什么说实际通过的 QPS 会超过限流阈值的 QPS。
+
+  源码中给的注释：这里可能存在争论，但没关系。因并行导致超出的请求数不会超阈值太多，所以影响不大。
+
+  **4. 预期通过时间如果超过当前时间那就休眠等待**，需要等待的时间等于预期通过时间减去当前时间，如果等待时间超过队列允许的最大等待时间，则直接拒绝该请求。
+
+  **5. 如果当前请求更新 latestPassedTime 为自己的预期通过时间后**，需要等待的时间少于限定的最大等待时间，说明排队有效，否则自己退出队列并回退一个间隔时间。
+
+  此时 latestPassedTime 就是当前请求的预期通过时间，后续的请求将排在该请求的后面。这就是虚拟队列的核心实现，按预期通过时间排队。
+
+  **6. 如果等待时间超过队列允许的最大排队时间则回退一个间隔时间，并拒绝当前请求。**
+
+  回退一个间隔时间相当于将数组中一个元素移除后，将此元素后面的所有元素都向前移动一个位置。此处与数组移动不同的是，该操作不会减少已经在等待的请求的等待时间。
+
+  **7. 休眠等待**
+
+  匀速流控适合用于请求突发性增长后剧降的场景。例如用在有定时任务调用的接口，在定时任务执行时请求量一下子飙高，但随后又没有请求的情况，这个时候我们不希望一下子让所有请求都通过，避免把系统压垮，但也不想直接拒绝超出阈值的请求，这种场景下使用匀速流控可以将突增的请求排队到低峰时执行，起到“削峰填谷”的效果。
+
+#### QPS1000问题
+
+在分析完源码后，我们再来看一个 Issue，如下图所示。
+
+![image-20240108193143062](image-20240108193143062.png) 
+
+为什么将 QPS 限流阈值配置超过 1000 后导致限流不生效呢？
+
+计算请求通过的时间间隔算法如下：
+
+```java
+long costTime = Math.round(1.0 * (acquireCount) / count * 1000);
+```
+
+假设限流 QPS 阈值为 1200，当 acquireCount 等于 1 时，costTime=1⁄1200*1000，这个结果是少于 1 毫秒的，使用 Math.round 取整后值为 1，而当 QPS 阈值越大，计算结果小于 0.5 时，Math.round 取整后值就变为 0。Sentinel 支持的最小等待时间单位是毫秒，这可能是出于性能的考虑。当限流阈值超过 1000 后，如果 costTime 计算结果不少于 0.5，则间隔时间都是 1 毫秒，这相当于还是限流 1000QPS；而当 costTime 计算结果小于 0.5 时，经过 Math.round 取整后值为 0，即请求间隔时间为 0 毫秒，也就是不排队等待，此时限流规则就完全无效了，配置等于没有配置
+
+### 冷启动算法
+
+Warm Up，冷启动。在应用升级重启时，应用自身需要一个预热的过程，预热之后才能到达一个稳定的性能状态，比如说，接口预热阶段完成 JIT 即时编译、完成一些单例对象的创建、线程池的创建、各种连接池的初始化、或者执行首次需要加锁执行的代码块。
+
+冷启动并非只在应用重启时需要，在一段时间没有访问的情况下，连接池存在大量过期连接需要待下次使用才移除掉并创建新的连接、一些热点数据缓存过期需要重新查数据库写入缓存等，这些场景下也需要冷启动。
+
+WarmUpController 支持设置冷启动周期（冷启动时长），默认为 10 秒，WarmUpController 在这 10 秒内会控制流量平缓的增长到限量阈值。例如，对某个接口限制 QPS 为 200，10 秒预热时间，那么这 10 秒内，相当于每秒的限流阈值分别为：5qps、15qps、35qps、70qps、90qps、115qps、145qps、170qps、190qps、200qps，当然，这组数据只是假设。
+
+如果要使用 WarmUpController，则限量规则阈值类型必须配置为 GRADE_QPS，例如：
+
+```java
+ FlowRule flowRule = new FlowRule();
+ // 限流 QPS 阈值
+ flowRule.setCount(200);
+ // 流量控制效果配置为使用冷启动控制器
+ flowRule.setControlBehavior(RuleConstant.CONTROL_BEHAVIOR_WARM_UP);
+ // 冷启动周期，单位秒
+ flowRule.setWarmUpPeriodSec(10); 
+ flowRule.setResource("GET:/hello");
+ FlowRuleManager.loadRules(Collections.singletonList(flowRule));
+```
+
+Sentinel 冷启动限流算法参考了 Guava 的 SmoothRateLimiter 实现的冷启动限流算法，但实现上有很大的区别，Sentinel 主要用于控制每秒的 QPS，不会控制每个请求的间隔时间，只要满足每秒通过的 QPS 即可。正因为与 Guava 的不同，官方文档目前也没有很详细的介绍具体实现，单看源码很难揣摩作者的思路，加上笔者水平有限，没能切底理解 Sentinel 冷启动限流算法实现的细节，因此我们也不过深的去分析 WarmUpController 的源码，只是结合 Guava 的实现算法作个简单介绍
+
+#### SmoothRateLimiter
+
+![image-20240108203032653](image-20240108203032653.png) 
+
+- 横坐标 storedPermits 代表存储桶中的令牌数量。
+- 纵坐标代表获取一个令牌需要的时间，即请求通过的时间间隔。
+- stableInterval：稳定产生令牌的时间间隔。
+- coldInterval：冷启动产生令牌的最大时间隔间，等于稳定产生令牌的时间间隔乘以冷启动系数（stableInterval*coldFactor）。
+- thresholdPermits：从冷启动到正常的令牌桶中令牌数量的阈值，是判断是否需要进入冷启动阶段的依据。
+- maxPermits：最大允许令牌桶中存放的令牌数。
+- slope：直线的斜率，即令牌生产的速率。
+- warmupPeriod：预热时长，即冷启动周期，对应上图中的梯形面积
+
+**PS：简单来说，上图展示了一种机制：当前存储的令牌数(`storedPermits`)越多，生成令牌的间隔时间就越长。当存储的令牌数到达最大值(`maxPermits`)生成令牌的间隔时间也到达最大值(`cold interval`)。`cold interval`同时受`stable interval`和`coldFactor`的影响，是两者的乘积，`coldFactor`默认为3.0，即`cold interval`是`stable interval`的3倍。`thresholdPermits`是一个拐点，当令牌数小于`thresholdPermits`时生成令牌的间隔时间稳定在`stable interval`；当令牌数大于`thresholdPermits`时，生成令牌的间隔时间以一个固定的速率发生变化。`thresholdPermits`等于预热时间内产生令牌数量的一半**
+
+在 SmoothRateLimiter 中，冷启动系数（coldFactor）的值固定为 3，假设我们设置冷启动周期为 10s、限流为每秒钟生成令牌数 200 个。那么 warmupPeriod 为 10s，将 1 秒中内的微秒数除以每秒钟需要生产的令牌数计算出生产令牌的时间间隔（stableInterval）为 5000μs，冷启动阶段最长的生产令牌的时间间隔（coldInterval）等于稳定速率下生产令牌的时间间隔（stableInterval）乘以 3，即 15000μs。
+
+```java
+// stableIntervalMicros：stableInterval 转为微秒
+// permitsPerSecond: 每秒钟生成的令牌数上限为 200
+double stableIntervalMicros = SECONDS.toMicros(1L) / permitsPerSecond;
+```
+
+由于 coldFactor 等于 3，且 coldInterval 等于 stableInterval 乘以 coldFactor，所以（coldInterval-stableInterval）是 stableInterval 的两倍，所以从 thresholdPermits 到 0 的时间是从 maxPermits 到 thresholdPermits 时间的一半，也就是 warmupPeriod 的一半。因为梯形的面积等于 warmupPeriod，所以长方形面积是梯形面积的一半，长方形的面积是 warmupPeriod/2。
+
+根据长方形的面积计算公式：
+
+> 面积 = 长 * 宽
+
+可得：
+
+> stableInterval*thresholdPermits = 1⁄2 * warmupPeriod
+
+所以：
+
+> thresholdPermits = 0.5 * warmupPeriod/stableInterval
+
+```java
+// warmupPeriodMicros: warmupPeriod 转为微秒
+// stableIntervalMicros：stableInterval 转为微秒
+thresholdPermits = 0.5 * warmupPeriodMicros / stableIntervalMicros;
+```
+
+所以：
+
+> thresholdPermits = 0.5 * 10s/5000μs = 1000
+
+由梯形面积公式：
+
+> (上低 + 下低) * 高 / 2
+
+可得：
+
+> warmupPeriod = ((stableInterval + coldInterval) * (maxPermits-thresholdPermits))/2
+
+推出：
+
+> maxPermits=thresholdPermits+2*warmupPeriod/(stableInterval+coldInterval)
+
+```java
+// warmupPeriodMicros: warmupPeriod 转为微秒
+// stableIntervalMicros：stableInterval 转为微秒
+// coldIntervalMicros: coldInterval 转为微秒
+maxPermits = thresholdPermits + 2.0 * warmupPeriodMicros / (stableIntervalMicros + coldIntervalMicros);
+```
+
+所以：
+
+> maxPermits = 1000 + 2.0 * 10s/(20000μs) = 2000
+
+由直线的斜率计算公式：
+
+> 斜率 = (y2-y1)/(x2-x1)
+
+可得：
+
+> slope = (coldInterval - stableInterval)/(maxPermits - thresholdPermits)
+
+所以：
+
+> slope = 10000μs/1000 = 10
+
+正常情况下，令牌以稳定时间间隔 stableInterval 生产令牌，一秒钟内能生产的令牌就刚好是限流的阈值。
+
+如果初始化令牌数为 maxPermits 时，系统直接进入冷启动阶段，此时生产令牌的间隔时间最长，等于 coldInterval。如果此时以稳定的速率消费存储桶中的令牌，由于消费速度大于生产速度，那么令牌桶中的令牌将会慢慢减少，当 storedPermits 中的令牌数慢慢下降到 thresholdPermits 时，冷启动周期结束，将会以稳定的时间间隔 stableInterval 生产令牌。当消费速度等于生产速度，则稳定在限量阈值，而当消费速度远小于生产速度时，存储桶中的令牌数就会堆积，如果堆积的令牌数超过 thresholdPermits，又会是一轮新的冷启动。
+
+SmoothRateLimiter 中，在每个请求获取令牌时根据当前时间与上一次获取令牌时间（nextFreeTicketMicros）的间隔时间计算需要生成新的令牌数并加入到令牌桶中。在应用重启时或者接口很久没有被访问后，nextFreeTicketMicros 的值要么为 0，要么远远小于当前时间，当前时间与 nextFreeTicketMicros 的间隔非常大，导致第一次生产令牌数就会达到 maxPermits，所以就会进入冷启动阶段。
+
+SmoothRateLimiter#resync 方法源码如下。
+
+```java
+// 该方法是被加锁同步调用的
+void resync(long nowMicros) {
+    // nextFreeTicket: 上次生产令牌的时间
+    if (nowMicros > nextFreeTicketMicros) {
+      // coolDownIntervalMicros 的值为 stableInterval
+      // nowMicros - nextFreeTicketMicros: 当前时间与上次生产令牌的时间间隔
+      double newPermits = (nowMicros - nextFreeTicketMicros) / coolDownIntervalMicros();
+      // 存储桶的数量 = 桶中剩余的 + 新生产的， 与 maxPermits 取最小值
+      storedPermits = min(maxPermits, storedPermits + newPermits);
+      // 更新上次生产令牌的时间
+      nextFreeTicketMicros = nowMicros;
+    }
+}
+```
+
+#### WarmUpController
+
+了解了 Guava 的 SmoothRateLimiter 实现后，我们再来看下 Sentinel 的 WarmUpController。
+
+```java
+public class WarmUpController implements TrafficShapingController {
+
+    protected double count;
+    private int coldFactor;
+    protected int warningToken = 0;
+    private int maxToken;
+    protected double slope;
+
+    protected AtomicLong storedTokens = new AtomicLong(0);
+    protected AtomicLong lastFilledTime = new AtomicLong(0);
+}
+```
+
+- warningToken：等同于 thresholdPermits，稳定的令牌生产速率下令牌桶中存储的令牌数。
+- maxToken：等同于 maxPermits，令牌桶的最大容量。
+- storedTokens：令牌桶当前存储的令牌数量。
+- lastFilledTime：上一次生产令牌的时间戳。
+- coldFactor：冷启动系数，默认也是 3。
+- slope：斜率，每秒放行请求数的增长速率。
+- count：限流阈值 QPS。
+
+warningToken、maxToken、slope 的计算可参考 Guava 的 SmoothRateLimiter。
+
+WarmUpController#canPass 方法源码如下：
+
+```java
+@Override
+    public boolean canPass(Node node, int acquireCount, boolean prioritized) {
+        // 当前时间窗口通过的 qps
+        long passQps = (long) node.passQps();
+        // 前一个时间窗口通过的 qps
+        long previousQps = (long) node.previousPassQps();
+        // resync
+        syncToken(previousQps);
+
+        long restToken = storedTokens.get();
+        // 如果令牌桶中存放的令牌数超过警戒线，则进入冷启动阶段，调整 QPS。
+        if (restToken >= warningToken) {
+            // 超过 thresholdPermits 的当前令牌数
+            long aboveToken = restToken - warningToken;
+            double warningQps = Math.nextUp(1.0 / (aboveToken * slope + 1.0 / count));
+            // 小于 warningQps 才放行
+            if (passQps + acquireCount <= warningQps) {
+                return true;
+            }
+        } else {
+            // 未超过警戒线的情况下按正常限流，如果放行当前请求之后会导致通过的 QPS 超过阈值则拦截当前请求，
+            // 否则放行。
+            if (passQps + acquireCount <= count) {
+                return true;
+            }
+        }
+        return false;
+    }
+```
+
+canPass 方法中，首先获取当前存储桶的令牌数，如果大于 warningToken，则控制 QPS。根据当前令牌桶中存储的令牌数量超出 warningToken 的令牌数计算当前秒需要控制的 QPS 的阈值，这两行代码是关键。
+
+```java
+// restToken：当前令牌桶中的令牌数量
+long aboveToken = restToken - warningToken;
+// 1.0 表示 1 秒
+double warningQps = Math.nextUp(1.0 / (aboveToken * slope + 1.0 / count));
+```
+
+我们看图理解这个公式。
+
+![image-20240108203806095](image-20240108203806095.png) 
+
+结合上图我们可以看出：
+
+- 图中的 x1 虚线的长度就等于 aboveToken。
+- 此时生产令牌的间隔时间等于 y1 的长度加上 stableInterval，在 Sentinel 中单位为秒。
+
+根据斜率和 x1 可计算出 y1 的值为：
+
+> y1 = slope * aboveToken
+
+而 1.0/count 计算出来的值是正常情况下每隔多少毫秒生产一个令牌，即 stableInterval。
+
+所以计算 warningQps 的公式等同于：
+
+```java
+// 当前生产令牌的间隔时间：aboveToken * slope + stableInterval
+// 1.0 / 生产令牌间隔时间 = 当前 1 秒所能生产的令牌数量
+double warningQps = Math.nextUp(1.0 / (aboveToken * slope + stableInterval));
+```
+
+当前生产令牌的间隔时间为：
+
+> aboveToken * slope + stableInterval = stableInterval + y1；
+
+当前每秒所能生产的令牌数为：1.0/(stableInterval+y1)。
+
+所以 warningQps 就等于当前每秒所能生产的令牌数。
+
+Sentinel 中的 resync 与 SmoothRateLimiter 的 resync 方法不同，Sentinel 每秒只生产一次令牌。WarmUpController 的 syncToken 方法源码如下：
+
+```java
+   // passQps：上一秒通过的 QPS 总数 
+   protected void syncToken(long passQps) {
+        long currentTime = TimeUtil.currentTimeMillis();
+        // 去掉毫秒，取秒
+        currentTime = currentTime - currentTime % 1000;
+        long oldLastFillTime = lastFilledTime.get();
+        // 控制每秒只更新一次
+        if (currentTime <= oldLastFillTime) {
+            return;
+        }
+
+        long oldValue = storedTokens.get();
+        // 计算新的存储桶存储的令牌数
+        long newValue = coolDownTokens(currentTime, passQps);
+        if (storedTokens.compareAndSet(oldValue, newValue)) {
+            // storedTokens 扣减上个时间窗口的 qps
+            long currentValue = storedTokens.addAndGet(-passQps);
+            if (currentValue < 0) {
+                storedTokens.set(0L);
+            }
+            lastFilledTime.set(currentTime);
+        }
+    }
+```
+
+Sentinel 并不是在每个请求通过时从桶中移除 Token，而是每秒在更新存储桶的令牌数时，再扣除上一秒消耗的令牌数量，上一秒消耗的令牌数量等于上一秒通过的请求数，这就是官方文档所写的每秒会自动掉落令牌。减少每一次请求都使用 CAS 更新令牌桶的令牌数可以降低 Sentinel 对应用性能的影响，这是非常巧妙的做法。
+
+> 更新令牌桶中的令牌总数 = 当前令牌桶中剩余的令牌总数 + 当前需要生成的令牌数（1 秒时间可生产的令牌总数）。
+
+coolDownTokens 方法的源码如下：
+
+```java
+   //  currentTime： 当前时间戳，单位为秒，但后面 3 位全为 0
+   //  passQps：上一秒通过的 QPS
+   private long coolDownTokens(long currentTime, long passQps) {
+        long oldValue = storedTokens.get();
+        long newValue = oldValue;
+        // 添加令牌的判断前提条件: 当令牌的消耗远低于警戒线的时候
+        if (oldValue < warningToken) {
+            newValue = (long) (oldValue + (currentTime - lastFilledTime.get()) * count / 1000);
+        } else if (oldValue > warningToken) {
+            // 上一秒通过的请求数少于限流阈值的 1/coldFactor 时
+            if (passQps < (int) count / coldFactor) {
+                newValue = (long) (oldValue + (currentTime - lastFilledTime.get()) * count / 1000);
+            }
+        }
+        return Math.min(newValue, maxToken);
+    }
+```
+
+其中 (currentTime - lastFilledTime.get()) 为当前时间与上一次生产令牌时间的间隔时间，虽然单位为毫秒，但是已经去掉了毫秒的部分（毫秒部分全为 0）。如果 currentTime - lastFilledTime.get() 等于 1 秒，根据 1 秒等于 1000 毫秒，那么新生成的令牌数（newValue）等于限流阈值（count）。
+
+```java
+newValue = oldValue + 1000 * count / 1000
+         = oldValue + count
+```
+
+如果是很久没有访问的情况下，lastFilledTime 远小于 currentTime，那么第一次生产的令牌数量将等于 maxToken。
 
 ## 熔断与自适应
 
