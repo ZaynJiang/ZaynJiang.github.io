@@ -1,0 +1,102 @@
+{
+    "root": {
+        "data": {
+            "id": "czgq47cjr1s0",
+            "created": 1709124629126,
+            "text": "task",
+            "background": "#73a1bf"
+        },
+        "children": [
+            {
+                "data": {
+                    "id": "czgq4x1qdq00",
+                    "created": 1709124685068,
+                    "text": "已完成",
+                    "layout_right_offset": {
+                        "x": -8,
+                        "y": -39.5
+                    },
+                    "layout": null,
+                    "expandState": "expand"
+                },
+                "children": [
+                    {
+                        "data": {
+                            "id": "czgq6fwq43c0",
+                            "created": 1709124804489,
+                            "text": "jvm"
+                        },
+                        "children": []
+                    },
+                    {
+                        "data": {
+                            "id": "czgq8axkz600",
+                            "created": 1709124950385,
+                            "text": "grpc"
+                        },
+                        "children": []
+                    },
+                    {
+                        "data": {
+                            "id": "czgq6kcyo800",
+                            "created": 1709124814178,
+                            "text": "并发编程"
+                        },
+                        "children": []
+                    },
+                    {
+                        "data": {
+                            "id": "czgq6t2mga00",
+                            "created": 1709124833144,
+                            "text": "redis"
+                        },
+                        "children": []
+                    },
+                    {
+                        "data": {
+                            "id": "czgq70kpp5s0",
+                            "created": 1709124849475,
+                            "text": "设计模式"
+                        },
+                        "children": []
+                    },
+                    {
+                        "data": {
+                            "id": "czgq75tvke80",
+                            "created": 1709124860913,
+                            "text": "linux命令"
+                        },
+                        "children": []
+                    },
+                    {
+                        "data": {
+                            "id": "czgq7aw48pc0",
+                            "created": 1709124871932,
+                            "text": "activity"
+                        },
+                        "children": []
+                    }
+                ]
+            },
+            {
+                "data": {
+                    "id": "czgq4ycepi00",
+                    "created": 1709124687891,
+                    "text": "进行中"
+                },
+                "children": []
+            },
+            {
+                "data": {
+                    "id": "czgq5lg0aow0",
+                    "created": 1709124738174,
+                    "text": "可选"
+                },
+                "children": []
+            }
+        ]
+    },
+    "template": "right",
+    "theme": "fresh-blue",
+    "version": "1.4.43"
+}
