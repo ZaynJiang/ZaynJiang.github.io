@@ -221,6 +221,8 @@ Kafka 中任何类型的消息读取，都是通过给指定 Broker 发送 Fetch
 
 ### 2.3. 小结
 
+![image-20240428101348156](image-20240428101348156.png) 
+
 * AbstractFetcherThread 类
 
   拉取线程的抽象基类。它定义了公共方法来处理所有拉取线程都要实现的逻辑，如执行截断操作，获取消息等。
@@ -237,13 +239,173 @@ Kafka 中任何类型的消息读取，都是通过给指定 Broker 发送 Fetch
 
 ### doWork 
 
+```
+
+override def doWork(): Unit = {
+  maybeTruncate()   // 执行副本截断操作
+  maybeFetch()      // 执行消息获取操作
+}
+```
+
+AbstractFetcherThread 线程只要一直处于运行状态，就是会不断地重复这两个操作。获取消息这个逻辑容易理解，但是为什么 AbstractFetcherThread 线程总要不断尝试去做截断呢？
+
+这是因为，分区的 Leader 可能会随时发生变化。每当有新 Leader 产生时，Follower 副本就必须主动执行截断操作，将自己的本地日志裁剪成与 Leader 一模一样的消息序列，甚至，Leader 副本本身也需要执行截断操作，将 LEO 调整到分区高水位处。
+
 #### maybeTruncate
+
+```
+private def maybeTruncate(): Unit = {
+  // 将所有处于截断中状态的分区依据有无Leader Epoch值进行分组
+  val (partitionsWithEpochs, partitionsWithoutEpochs) = fetchTruncatingPartitions()
+  // 对于有Leader Epoch值的分区，将日志截断到Leader Epoch值对应的位移值处
+  if (partitionsWithEpochs.nonEmpty) {
+    truncateToEpochEndOffsets(partitionsWithEpochs)
+  }
+  // 对于没有Leader Epoch值的分区，将日志截断到高水位值处
+  if (partitionsWithoutEpochs.nonEmpty) {
+    truncateToHighWatermark(partitionsWithoutEpochs)
+  }
+}
+
+```
+
+
 
 首先，是对分区状态进行分组。既然是做截断操作的，那么该方法操作的就只能是处于截断中状态的分区。代码会判断这些分区是否存在对应的 Leader Epoch 值，并按照有无 Epoch 值进行分组。这就是 fetchTruncatingPartitions 方法做的事情
 
 #### maybeFetch
 
-### processPartitionData 
+第 1 步，为 partitionStates 中的分区构造 FetchRequest 对象，严格来说是 FetchRequest.Builder 对象。构造了 Builder 对象之后，通过调用其 build 方法，就能创建出所需的 FetchRequest 请求对象。
+
+这里的 partitionStates 中保存的是，要去获取消息的一组分区以及对应的状态信息。这一步的输出结果是两个对象：
+
+一个对象是 ReplicaFetch，即要读取的分区核心信息 + FetchRequest.Builder 对象。而这里的核心信息，就是指要读取哪个分区，从哪个位置开始读，最多读多少字节，等等。
+
+另一个对象是一组出错分区。
+
+第 2 步，处理这组出错分区。处理方式是将这组分区加入到有序 Map 末尾等待后续重试。如果发现当前没有任何可读取的分区，代码会阻塞等待一段时间。
+
+第 3 步，发送 FETCH 请求给对应的 Leader 副本，并处理相应的 Response，也就是 processFetchRequest 方法要做的事情
+
+##### processFetchRequest 
+
+分为以下 3 大部分。
+
+* 第 1 步，调用 fetchFromLeader 方法给 Leader 发送 FETCH 请求，并阻塞等待 Response 的返回，然后更新 FETCH 请求发送速率的监控指标。
+* 第 2 步，拿到 Response 之后，代码从中取出分区的核心信息，然后比较要读取的位移值，和当前 AbstractFetcherThread 线程缓存的、该分区下一条待读取的位移值是否相等，以及当前分区是否处于可获取状态。如果不满足这两个条件，说明这个 Request 可能是一个之前等待了许久都未处理的请求，压根就不用处理了。相反，如果满足这两个条件且 Response 没有错误，代码会提取 Response 中的 Leader Epoch 值，然后交由子类实现具体的 Response 处理，也就是调用 processPartitionData 方法。之后将该分区放置在有序 Map 的末尾以保证公平性。而如果该 Response 有错误，那么就调用对应错误的定制化处理逻辑，然后将出错分区加入到出错分区列表中。
+* 第 3 步，调用 handlePartitionsWithErrors 方法，统一处理上一步处理过程中出现错误的分区
+
+### ReplicaFetcherThread
+
+#### 类定义及字段
+
+```
+class ReplicaFetcherThread(name: String,
+                           fetcherId: Int,
+                           sourceBroker: BrokerEndPoint,
+                           brokerConfig: KafkaConfig,
+                           failedPartitions: FailedPartitions,
+                           replicaMgr: ReplicaManager,
+                           metrics: Metrics,
+                           time: Time,
+                           quota: ReplicaQuota,
+                           leaderEndpointBlockingSend: Option[BlockingSend] = None)
+  extends AbstractFetcherThread(name = name,
+                                clientId = name,
+                                sourceBroker = sourceBroker,
+                                failedPartitions,
+                                fetchBackOffMs = brokerConfig.replicaFetchBackoffMs,
+                                isInterruptible = false,
+                                replicaMgr.brokerTopicStats) {
+  // 副本Id就是副本所在Broker的Id
+  private val replicaId = brokerConfig.brokerId
+  ......
+  // 用于执行请求发送的类
+  private val leaderEndpoint = leaderEndpointBlockingSend.getOrElse(
+    new ReplicaFetcherBlockingSend(sourceBroker, brokerConfig, metrics, time, fetcherId,
+      s"broker-$replicaId-fetcher-$fetcherId", logContext))
+  // Follower发送的FETCH请求被处理返回前的最长等待时间
+  private val maxWait = brokerConfig.replicaFetchWaitMaxMs
+  // 每个FETCH Response返回前必须要累积的最少字节数
+  private val minBytes = brokerConfig.replicaFetchMinBytes
+  // 每个合法FETCH Response的最大字节数
+  private val maxBytes = brokerConfig.replicaFetchResponseMaxBytes
+  // 单个分区能够获取到的最大字节数
+  private val fetchSize = brokerConfig.replicaFetchMaxBytes
+  // 维持某个Broker连接上获取会话状态的类
+  val fetchSessionHandler = new FetchSessionHandler(
+    logContext, sourceBroker.id)
+  ......
+}
+```
+
+
+
+##### 基础字段
+
+ReplicaFetcherThread 类的定义代码虽然有些长，但你会发现没那么难懂，因为构造函数中的大部分字段我们上节课都学习过了。现在，我们只要学习 ReplicaFetcherThread 类特有的几个字段就可以了。
+
+- fetcherId
+
+  Follower 拉取的线程 Id，也就是线程的编号。单台 Broker 上，允许存在多个 ReplicaFetcherThread 线程。Broker 端参数 num.replica.fetchers，决定了 Kafka 到底创建多少个 Follower 拉取线程。
+
+- brokerConfig
+
+  KafkaConfig 类实例。虽然我们没有正式学习过它的源码，但之前学过的很多组件代码中都有它的身影。它封装了 Broker 端所有的参数信息。同样地，ReplicaFetcherThread 类也是通过它来获取 Broker 端指定参数的值。
+
+- replicaMgr
+
+  副本管理器。该线程类通过副本管理器来获取分区对象、副本对象以及它们下面的日志对象。
+
+- quota
+
+  用做限流。限流属于高阶用法，如果你想深入理解这部分内容的话，可以自行阅读 ReplicationQuotaManager 类的源码。现在，只要你下次在源码中碰到 quota 字样的，知道它是用作 Follower 副本拉取速度控制就行了。
+
+- leaderEndpointBlockingSend
+
+  这是用于实现同步发送请求的类。所谓的同步发送，是指该线程使用它给指定 Broker 发送请求，然后线程处于阻塞状态，直到接收到 Broker 返回的 Response。
+
+##### 消息字段
+
+除了构造函数中定义的字段之外，ReplicaFetcherThread 类还定义了与消息获取息息相关的 4 个字段。
+
+maxWait：Follower 发送的 FETCH 请求被处理返回前的最长等待时间。它是 Broker 端参数 replica.fetch.wait.max.ms 的值。
+
+minBytes：每个 FETCH Response 返回前必须要累积的最少字节数。它是 Broker 端参数 replica.fetch.min.bytes 的值。
+
+maxBytes：每个合法 FETCH Response 的最大字节数。它是 Broker 端参数 replica.fetch.response.max.bytes 的值。
+
+fetchSize：单个分区能够获取到的最大字节数。它是 Broker 端参数 replica.fetch.max.bytes 的值。
+
+这 4 个参数都是 FETCH 请求的参数，主要控制了 Follower 副本拉取 Leader 副本消息的行为，比如一次请求到底能够获取多少字节的数据，或者当未达到累积阈值时，FETCH 请求等待多长时间等
+
+#### 重要方法
+
+ 3个重要方法：processPartitionData、buildFetch 和 truncate代表了 Follower 副本拉取线程要做的最重要的三件事：处理拉取的消息、构建拉取消息的请求，以及执行截断日志操作
+
+##### processPartitionData 
+
+processPartitionData 方法中的 process，实际上就是写入 Follower 副本本地日志的意思。因此，这个方法的主体逻辑，就是调用分区对象 Partition 的 appendRecordsToFollowerOrFutureReplica 写入获取到的消息。如果你沿着这个写入方法一路追下去，就会发现它调用的是我们在第 2 讲中讲到过的 appendAsFollower 方法。你看一切都能串联起来，源码也没什么大不了的，对吧？
+
+当然，仅仅写入日志还不够。我们还要做一些更新操作。比如，需要更新 Follower 副本的高水位值，即将 FETCH 请求 Response 中包含的高水位值作为新的高水位值，同时代码还要尝试更新 Follower 副本的 Log Start Offset 值。
+
+那为什么 Log Start Offset 值也可能发生变化呢？这是因为 Leader 的 Log Start Offset 可能发生变化，比如用户手动执行了删除消息的操作等。Follower 副本的日志需要和 Leader 保持严格的一致，因此，如果 Leader 的该值发生变化，Follower 自然也要发生变化，以保持一致。
+
+除此之外，processPartitionData 方法还会更新其他一些统计指标值，最后将写入结果返回
+
+##### buildFetch
+
+接下来， 我们看下 buildFetch 方法。此方法的主要目的是，构建发送给 Leader 副本所在 Broker 的 FETCH 请求 
+
+这个方法的逻辑比 processPartitionData 简单。前面说到过，它就是构造 FETCH 请求的 Builder 对象然后返回。有了 Builder 对象，我们就可以分分钟构造出 FETCH 请求了，仅需要调用 builder.build() 即可。
+
+当然，这个方法的一个副产品是汇总出错分区，这样的话，调用方后续可以统一处理这些出错分区。值得一提的是，在构造 Builder 的过程中，源码会用到 ReplicaFetcherThread 类定义的那些与消息获取相关的字段，如 maxWait、minBytes 和 maxBytes
+
+##### truncate
+
+最后，我们看下 truncate 方法的实现。这个方法的主要目的是对给定分区执行日志截断操作。
+
+总体来说，truncate 方法利用给定的 offsetTruncationState 的 offset 值，对给定分区的本地日志进行截断操作。该操作由 Partition 对象的 truncateTo 方法完成，但实际上底层调用的是 Log 的 truncateTo 方法。truncateTo 方法的主要作用，是将日志截断到小于给定值的最大位移值处
 
 ### 小结
 
@@ -256,6 +418,8 @@ truncate 方法：根据 Leader 副本返回的位移值和 Epoch 值执行本�
 buildFetch 方法：为一组特定分区构建 FetchRequest 对象所需的数据结构。
 
 processPartitionData 方法：处理从 Leader 副本获取到的消息，主要是写入到本地日志中。
+
+![image-20240428114031339](image-20240428114031339.png) 
 
 ## 4. ReplicaManager
 
@@ -309,6 +473,31 @@ FetchPartitionData 和 LogReadResult 很类似，它们的区别在哪里呢？
 
 其实，它们之间的差别非常小。如果翻开源码的话，你会发现，FetchPartitionData 类总共有 8 个字段，而构建 FetchPartitionData 实例的前 7 个字段都是用 LogReadResult 的字段来赋值的。你大致可以认为两者的作用是类似的。只是，FetchPartitionData 还有个字段标识该分区是不是处于重分配中。如果是的话，需要更新特定的 JXM 监控指标。这是这两个类的主要区别。
 
+```
+class ReplicaManager(
+  val config: KafkaConfig,  // 配置管理类
+  metrics: Metrics,  // 监控指标类
+  time: Time,  // 定时器类
+  val zkClient: KafkaZkClient,  // ZooKeeper客户端
+  scheduler: Scheduler,   // Kafka调度器
+  val isShuttingDown: AtomicBoolean,  // 是否已经关闭
+  quotaManagers: QuotaManagers,  // 配额管理器
+  val brokerTopicStats: BrokerTopicStats,  // Broker主题监控指标类
+  val metadataCache: MetadataCache,  // Broker元数据缓存
+  logDirFailureChannel: LogDirFailureChannel,
+  // 处理延时PRODUCE请求的Purgatory
+  val delayedProducePurgatory: DelayedOperationPurgatory[DelayedProduce],
+  // 处理延时FETCH请求的Purgatory
+  val delayedFetchPurgatory: DelayedOperationPurgatory[DelayedFetch],
+  // 处理延时DELETE_RECORDS请求的Purgatory
+  val delayedDeleteRecordsPurgatory: DelayedOperationPurgatory[DelayedDeleteRecords],
+  // 处理延时ELECT_LEADERS请求的Purgatory
+  val delayedElectLeaderPurgatory: DelayedOperationPurgatory[DelayedElectLeader],
+  threadNamePrefix: Option[String]) extends Logging with KafkaMetricsGroup {
+  ......
+}  
+```
+
 ### 4.2. 字段
 
 ReplicaManager 类构造函数的字段非常多。这里几个关键的字段比较重要
@@ -351,9 +540,22 @@ ReplicaManager 类构造函数的字段非常多。这里几个关键的字段�
 
   Kafka 没有所谓的分区管理器，ReplicaManager 类承担了一部分分区管理的工作。这里的 allPartitions，就承载了 Broker 上保存的所有分区对象数据，allPartitions 是分区 Partition 对象实例的容器。这里的 HostedPartition 是代表分区状态的类。allPartitions 会将所有分区对象初始化成 Online 状态
 
+  ```
+  private val allPartitions = new Pool[TopicPartition, HostedPartition](
+    valueFactory = Some(tp => HostedPartition.Online(Partition(tp, time, this)))
+  )
+  
+  ```
+
+  值得注意的是，这里的分区状态和我们之前讲到的分区状态机里面的状态完全隶属于两套“领导班子”。也许未来它们会有合并的可能。毕竟，它们二者的功能是有重叠的地方的，表示的含义也有相似之处。比如它们都定义了 Online 状态，其实都是表示正常工作状态下的分区状态。当然，这只是我根据源码功能做的一个大胆推测，至于是否会合并，我们拭目以待吧。
+
+  再多说一句，Partition 类是表征分区的对象。一个 Partition 实例定义和管理单个分区，它主要是利用 logManager 帮助它完成对分区底层日志的操作。ReplicaManager 类对于分区的管理，都是通过 Partition 对象完成的
+
 * replicaFetcherManager
 
-replicaFetcherManager。它的主要任务是**创建 ReplicaFetcherThread 类实例**。上节课，我们学习了 ReplicaFetcherThread 类的源码，它的主要职责是**帮助 Follower 副本向 Leader 副本拉取消息，并写入到本地日志中**
+  replicaFetcherManager。它的主要任务是**创建 ReplicaFetcherThread 类实例**。上节课，我们学习了 ReplicaFetcherThread 类的源码，它的主要职责是**帮助 Follower 副本向 Leader 副本拉取消息，并写入到本地日志中**
+
+  该方法的主要目的是创建 ReplicaFetcherThread 实例，供 Follower 副本使用。线程的名字是根据 fetcherId 和 Broker ID 来确定的。ReplicaManager 类利用 replicaFetcherManager 字段，对所有 Fetcher 线程进行管理，包括线程的创建、启动、添加、停止和移除
 
 ### 4.3. 副本读写
 
@@ -497,7 +699,11 @@ def fetchMessages(timeout: Long,
 
 从这两个方法中，我们已经看到了之前课程中单个组件融合在一起的趋势。就像我在开篇词里面说的，虽然我们学习单个源码文件的顺序是自上而下，但串联 Kafka 主要组件功能的路径却是自下而上
 
-### 4.5. 副本管理器
+### 小结
+
+![image-20240428134415955](image-20240428134415955.png) 
+
+### 4.5. 管理副本
 
 ReplicaManager 类具有分区和副本管理功能，以及 ISR 管理。
 
@@ -539,11 +745,146 @@ ReplicaManager 管理它们的方式，是通过字段 allPartitions 来实现�
 
   简单来说，它就是告诉接收该请求的 Broker：在我传给你的这些分区中，哪些分区的 Leader 副本在你这里；哪些分区的 Follower 副本在你这里。becomeLeaderOrFollower 方法，就是具体处理 LeaderAndIsrRequest 请求的地方，同时也是副本管理器添加分区的地方。一共有三 3 个部分向你介绍，分别是处理 Controller Epoch 事宜、执行成为 Leader 和 Follower 的逻辑以及构造 Response。	
 
-  * makeLeaders 
+  * **处理 Controller Epoch 及其他相关准备工作**
 
-  * makeFollowers 
+    * 首先，比较 LeaderAndIsrRequest 携带的 Controller Epoch 值和当前 Controller Epoch 值。如果发现前者小于后者，说明 Controller 已经变更到别的 Broker 上了，需要构造一个 STALE_CONTROLLER_EPOCH 异常并封装进 Response 返回。否则，代码进入 else 分支。
+    * 然后，becomeLeaderOrFollower 方法会更新当前缓存的 Controller Epoch 值，再提取出 LeaderAndIsrRequest 请求中涉及到的分区，之后依次遍历这些分区，并执行下面的两步逻辑。
+    * 第 1 步，从 allPartitions 中取出对应的分区对象。分区有 3 种状态，即在线（Online）、离线（Offline）和不存在（None），这里代码就需要分别应对这 3 种情况：
+      * 如果是 Online 状态的分区，直接将其赋值给 partitionOpt 字段即可；
+      * 如果是 Offline 状态的分区，说明该分区副本所在的 Kafka 日志路径出现 I/O 故障时（比如磁盘满了），需要构造对应的 KAFKA_STORAGE_ERROR 异常并封装进 Response，同时令 partitionOpt 字段为 None；
+      * 如果是 None 状态的分区，则创建新分区对象，然后将其加入到 allPartitions 中，进行统一管理，并赋值给 partitionOpt 字段。
+    * 第 2 步，检查 partitionOpt 字段表示的分区的 Leader Epoch。检查的原则是要确保请求中携带的 Leader Epoch 值要大于当前缓存的 Leader Epoch，否则就说明是过期 Controller 发送的请求，就直接忽略它，不做处理。
+  
+    总之呢，becomeLeaderOrFollower 方法的第一部分代码，主要做的事情就是创建新分区、更新 Controller Epoch 和校验分区 Leader Epoch
+  
+  * **becomeLeaderOrFollower 方法进入到第 2 部分，开始执行 Broker 成为 Leader 副本和 Follower 副本的逻辑**
+  
+    **首先**，这部分代码需要先确定两个分区集合，一个是把该 Broker 当成 Leader 的所有分区；一个是把该 Broker 当成 Follower 的所有分区。判断的依据，主要是看 LeaderAndIsrRequest 请求中分区的 Leader 信息，是不是和本 Broker 的 ID 相同。如果相同，则表明该 Broker 是这个分区的 Leader；否则，表示当前 Broker 是这个分区的 Follower。
+  
+    一旦确定了这两个分区集合，**接着**，代码就会分别为它们调用 makeLeaders 和 makeFollowers 方法，正式让 Leader 和 Follower 角色生效。之后，对于那些当前 Broker 成为 Follower 副本的主题，代码需要移除它们之前的 Leader 副本监控指标，以防出现系统资源泄露的问题。同样地，对于那些当前 Broker 成为 Leader 副本的主题，代码要移除它们之前的 Follower 副本监控指标。
+  
+    **最后**，如果有分区的本地日志为空，说明底层的日志路径不可用，那么标记该分区为 Offline 状态。所谓的标记为 Offline 状态，主要是两步：第 1 步是更新 allPartitions 中分区的状态；第 2 步是移除对应分区的监控指标。
+  
+  * **第 3 大部分的代码，构造 Response 对象**
+  
+    首先，这部分开始时会启动一个专属线程来执行高水位值持久化，定期地将 Broker 上所有非 Offline 分区的高水位值写入检查点文件。这个线程是个后台线程，默认每 5 秒执行一次。
+  
+    同时，代码还会添加日志路径数据迁移线程。这个线程的主要作用是，将路径 A 上面的数据搬移到路径 B 上。这个功能是 Kafka 支持 JBOD（Just a Bunch of Disks）的重要前提。
+  
+    之后，becomeLeaderOrFollower 方法会关闭空闲副本拉取线程和空闲日志路径数据迁移线程。判断空闲与否的主要条件是，分区 Leader/Follower 角色调整之后，是否存在不再使用的拉取线程了。代码要确保及时关闭那些不再被使用的线程对象。
+  
+    再之后是执行 LeaderAndIsrRequest 请求的回调处理逻辑。这里的回调逻辑，实际上只是对 Kafka 两个内部主题（__consumer_offsets 和 __transaction_state）有用，其他主题一概不适用。所以通常情况下，你可以无视这里的回调逻辑。
+  
+    等这些都做完之后，代码开始执行这部分最后，也是最重要的任务：构造 LeaderAndIsrRequest 请求的 Response，然后将新创建的 Response 返回。至此，这部分方法的逻辑结束。
+  
+    纵观 becomeLeaderOrFollower 方法的这 3 大部分，becomeLeaderOrFollower 方法最重要的职责，在我看来就是调用 makeLeaders 和 makeFollowers 方法，为各自的分区列表执行相应的角色确认工作
+  
+* makeLeaders 
+
+  makeLeaders 方法的作用是，让当前 Broker 成为给定一组分区的 Leader，也就是让当前 Broker 下该分区的副本成为 Leader 副本
+
+  停掉这些分区对应的获取线程；
+
+  更新 Broker 缓存中的分区元数据信息；
+
+  将指定分区添加到 Leader 分区集合
+
+* makeFollowers 
+
+  makeFollowers 方法的作用是，将当前 Broker 配置成指定分区的 Follower 副本
+
+  * 遍历 partitionStates 中的所有分区，然后执行“成为 Follower”的操作；
+    * 更新 Controller Epoch 值；
+    * 保存副本列表（Assigned Replicas，AR）和清空 ISR；
+    * 创建日志对象；
+    * 重设 Leader 副本的 Broker ID。
+  * 执行其他动作，主要包括重建 Fetcher 线程、完成延时请求等
+
+  更新 Controller Epoch 值；
+
+  保存副本列表（Assigned Replicas，AR）和清空 ISR；
+
+  创建日志对象；
+
+  重设 Leader 副本的 Broker ID
+
+  遍历 partitionStates 中的所有分区，然后执行“成为 Follower”的操作；
 
 #### 4.5.2. ISR 管理
+
+除了读写副本、管理分区和副本的功能之外，副本管理器还有一个重要的功能，那就是管理 ISR。这里的管理主要体现在两个方法：
+
+* 一个是 maybeShrinkIsr 方法，作用是阶段性地查看 ISR 中的副本集合是否需要收缩；
+
+  收缩是指，把 ISR 副本集合中那些与 Leader 差距过大的副本移除的过程。所谓的差距过大，就是 ISR 中 Follower 副本滞后 Leader 副本的时间，超过了 Broker 端参数 replica.lag.time.max.ms 值的 1.5 倍
+
+  ReplicaManager 类的 startup 方法会在被调用时创建一个异步线程，定时查看是否有 ISR 需要进行收缩。这里的定时频率是 replicaLagTimeMaxMs 值的一半，而判断 Follower 副本是否需要被移除 ISR 的条件是，滞后程度是否超过了 replicaLagTimeMaxMs 值
+
+  因此理论上，滞后程度小于 1.5 倍 replicaLagTimeMaxMs 值的 Follower 副本，依然有可能在 ISR 中，不会被移除。这就是数字“1.5”的由来了
+
+  整个更新的流程为：
+
+  * **第 1 步**，判断是否需要执行 ISR 收缩。主要的方法是，调用 needShrinkIsr 方法来获取与 Leader 不同步的副本。如果存在这样的副本，说明需要执行 ISR 收缩。
+  * **第 2 步**，再次获取与 Leader 不同步的副本列表，并把它们从当前 ISR 中剔除出去，然后计算得出最新的 ISR 列表。
+  * **第 3 步**，调用 shrinkIsr 方法去更新 ZooKeeper 上分区的 ISR 数据以及 Broker 上元数据缓存。
+  * **第 4 步**，尝试更新 Leader 分区的高水位值。这里有必要检查一下是否可以抬升高水位值的原因在于，如果 ISR 收缩后只剩下 Leader 副本一个了，那么高水位值的更新就不再受那么多限制了。
+  * **第 5 步**，根据上一步的结果，来尝试解锁之前不满足条件的延迟操作
+
+* 另一个是 maybePropagateIsrChanges 方法，作用是定期向集群 Broker 传播 ISR 的变更。
+
+  ISR 收缩之后，ReplicaManager 还需要将这个操作的结果传递给集群的其他 Broker，以同步这个操作的结果。这是由 ISR 通知事件来完成的。
+
+  在 ReplicaManager 类中，方法 maybePropagateIsrChanges 专门负责创建 ISR 通知事件。这也是由一个异步线程定期完成的，代码如下：
+
+  ```
+  scheduler.schedule("isr-change-propagation", maybePropagateIsrChanges _, period = 2500L, unit = TimeUnit.MILLISECONDS)
+  ```
+
+  ```
+  def maybePropagateIsrChanges(): Unit = {
+    val now = System.currentTimeMillis()
+    isrChangeSet synchronized {
+      // ISR变更传播的条件，需要同时满足：
+      // 1. 存在尚未被传播的ISR变更
+      // 2. 最近5秒没有任何ISR变更，或者自上次ISR变更已经有超过1分钟的时间
+      if (isrChangeSet.nonEmpty &&
+        (lastIsrChangeMs.get() + ReplicaManager.IsrChangePropagationBlackOut < now ||
+          lastIsrPropagationMs.get() + ReplicaManager.IsrChangePropagationInterval < now)) {
+        // 创建ZooKeeper相应的Znode节点
+        zkClient.propagateIsrChanges(isrChangeSet)
+        // 清空isrChangeSet集合
+        isrChangeSet.clear()
+        // 更新最近ISR变更时间戳
+        lastIsrPropagationMs.set(now)
+      }
+    }
+  }
+  
+  ```
+
+  确定 ISR 变更传播的条件。这里需要同时满足两点：
+
+  一是， 存在尚未被传播的 ISR 变更；
+
+  二是， 最近 5 秒没有任何 ISR 变更，或者自上次 ISR 变更已经有超过 1 分钟的时间。
+
+  一旦满足了这两个条件，代码会创建 ZooKeeper 相应的 Znode 节点；然后，清空 isrChangeSet 集合；最后，更新最近 ISR 变更时间戳。
+
+### 小结
+
+eplicaManager 类的核心功能和方法。
+
+分区 / 副本管理。ReplicaManager 类的核心功能是，应对 Broker 端接收的 LeaderAndIsrRequest 请求，并将请求中的分区信息抽取出来，让所在 Broker 执行相应的动作。
+
+becomeLeaderOrFollower 方法。它是应对 LeaderAndIsrRequest 请求的入口方法。它会将请求中的分区划分成两组，分别调用 makeLeaders 和 makeFollowers 方法。
+
+makeLeaders 方法。它的作用是让 Broker 成为指定分区 Leader 副本。
+
+makeFollowers 方法。它的作用是让 Broker 成为指定分区 Follower 副本的方法。
+
+ISR 管理。ReplicaManager 类提供了 ISR 收缩和定期传播 ISR 变更通知的功能
+
+![image-20240429154152461](image-20240429154152461.png) 
 
 ## 5. MetadataCache
 
@@ -650,11 +991,47 @@ UpdateMetadataPartitionState 类的字段信息非常丰富，它包含了一个
 
   元数据缓存只有被更新了，才能被读取。从某种程度上说，它是后续所有 getXXX 方法的前提条件
 
-  updateMetadata 方法的主要逻辑，就是**读取 UpdateMetadataRequest 请求中的分区数据，然后更新本地元数据缓存**
+  updateMetadata 方法的主要逻辑，就是**读取 UpdateMetadataRequest 请求中的分区数据，然后更新本地元数据缓存**;
+  
+  主要有三部分：
+  
+  * 第一部分
+  
+    主要作用是给后面的操作准备数据，即 aliveBrokers 和 aliveNodes 两个字段中保存的数据。
+  
+    因此，首先，代码会创建这两个字段，分别保存存活 Broker 对象和存活节点对象。aliveBrokers 的 Key 类型是 Broker ID，而 Value 类型是 Broker 对象；aliveNodes 的 Key 类型也是 Broker ID，Value 类型是 < 监听器，节点对象 > 对。
+  
+    然后，该方法从 UpdateMetadataRequest 中获取 Controller 所在的 Broker ID，并赋值给 controllerIdOpt 字段。如果集群没有 Controller，则赋值该字段为 None。
+  
+    接着，代码会遍历 UpdateMetadataRequest 请求中的所有存活 Broker 对象。取出它配置的所有 EndPoint 类型，也就是 Broker 配置的所有监听器。
+  
+    最后，代码会遍历它配置的监听器，并将 < 监听器，Broker 节点对象 > 对保存起来，再将 Broker 加入到存活 Broker 对象集合和存活节点对象集合。至此，第一部分代码逻辑完成。
+  
+  * 再来看第二部分的代码。
+  
+    这一部分的主要工作是**确保集群 Broker 配置了相同的监听器，同时初始化已删除分区数组对象，等待下一部分代码逻辑对它进行操作**
+  
+    这部分代码首先使用上一部分中的存活 Broker 节点对象，获取当前 Broker 所有的 < 监听器, 节点 > 对。
+  
+    之后，拿到为当前 Broker 配置的所有监听器。如果发现配置的监听器与其他 Broker 有不同之处，则记录一条错误日志。
+  
+    接下来，代码会构造一个已删除分区数组，将其作为方法返回结果。然后判断 UpdateMetadataRequest 请求是否携带了任何分区信息，如果没有，则构造一个新的 MetadataSnapshot 对象，使用之前的分区信息和新的 Broker 列表信息
+  
+  * 最后一部分全部位于上面代码中的 else 分支上。这部分的主要工作是**提取 UpdateMetadataRequest 请求中的数据，然后填充元数据缓存**
+  
+    首先，该方法会备份现有元数据缓存中的分区数据到 partitionStates 的局部变量中。
+  
+    之后，获取 UpdateMetadataRequest 请求中携带的所有分区数据，并遍历每个分区数据。如果发现分区处于被删除的过程中，就将分区从元数据缓存中移除，并把分区加入到已删除分区数组中。否则的话，代码就将分区加入到元数据缓存中。
+  
+    最后，方法使用更新过的分区元数据，和第一部分计算的存活 Broker 列表及节点列表，构建最新的元数据缓存，然后返回已删除分区列表数组。至此，updateMetadata 方法结束
+  
+    
 
 ### 5.3. 小结
 
 元数据缓存类。该类保存了当前集群上的主题分区详细数据和 Broker 数据。每台 Broker 都维护了一个 MetadataCache 实例。Controller 通过给 Broker 发送 UpdateMetadataRequest 请求的方式，来异步更新这部分缓存数据
+
+![image-20240430102904111](image-20240430102904111.png) 
 
 * MetadataCache 类
 
