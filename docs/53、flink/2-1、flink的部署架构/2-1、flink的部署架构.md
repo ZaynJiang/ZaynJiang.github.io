@@ -169,7 +169,7 @@ native部署的流程如下：
 
 #### 3.3. flink on yarn部署
 前面介绍了flink使用自身的资源管理器提交任务，我们还可以使用yarn来作为资源管理器来部署flink任务。yarn支持session模式和perjob模式。
-#### 3.3.1. 为什么要使用yarn部署  
+##### 3.3.1. 为什么要使用yarn部署  
 主要优势:
 * 与现有大数据平台无缝对接（ Hadoop2.4+)。·部署集群与任务提交都非常简单。
 * 资源管理统一通过Yarn 管理，提升整体资源利用率类。
@@ -182,7 +182,7 @@ native部署的流程如下：
 * Kerberos认证超期问题导致Checkpoint无法持久化。
 
 
-#### 3.3.2. flink on yarn架构 
+##### 3.3.2. flink on yarn架构 
 ![](yarn集群部署架构.png)    
 yarn集群部署架构有四大关键点: 
 * ResouManager ( RM) :
@@ -204,19 +204,19 @@ yarn集群部署架构有四大关键点:
   * 资源抽象，封装了节点上的多维度资源，如CPU，内存,网络资源  
 
 
-#### 3.3.3. session模式支持  
+##### 3.3.3. session模式支持  
 ![](yarn集群session模式.png)   
 其特点：  
 * 多jobmanager共享dispatcher和yarnresourcemanager
 * 支持native模式，tm动态申请  
 
-#### 3.3.4. per-job模式支持  
+##### 3.3.4. per-job模式支持  
 ![](yarn集群per-job模式.png)  
 * 单个JobManager独享YarnResourceManager和Dispatcher
 * Application Master 与Flink Master节点处于同一个Container
 
 
-#### 3.3.4. 部署步骤  
+##### 3.3.5. 部署步骤  
 * 下载安装包，并解压到单台节点指定路径;
 * Hadoop Yarn版本需要在2.4.1以上，且具有HDFS文件系统;
 * 该节点需要配置HADOOP_CONF_DIR环境变量，并指向Hadoop客户端配置路径
