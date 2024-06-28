@@ -486,7 +486,7 @@ vim /etc/vimrc  set nu
 
 常见的命令为：
 
-* uuseradd 用户名  
+* useradd 用户名  
 
   新建用户。如果没有指定组，则会创建一个同名的组
 
